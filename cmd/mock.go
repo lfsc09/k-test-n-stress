@@ -118,21 +118,38 @@ func interpretString(value string) (string, []string, error) {
 }
 
 func processMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
-	for key, value := range parseMap {
-		switch typedValue := value.(type) {
+	for objKey, objValue := range parseMap {
+		switch typedValue := objValue.(type) {
 		case string:
 			functionName, params, err := interpretString(typedValue)
 			if err != nil {
-				log.Fatalf("Ops..failed to interpret the value: %v", err)
+				log.Printf("Ops..failed to interpret the value: %v\n", err)
 			}
-			parseMap[key] = mocker.Generate(functionName, params)
+			parseMap[objKey] = mocker.Generate(functionName, params)
 		case map[string]interface{}:
 			err := processMap(typedValue, mocker)
 			if err != nil {
 				return err
 			}
+		case []interface{}:
+			for itemKey, item := range typedValue {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					err := processMap(itemMap, mocker)
+					if err != nil {
+						return err
+					}
+				} else if itemStr, ok := item.(string); ok {
+					functionName, params, err := interpretString(itemStr)
+					if err != nil {
+						log.Printf("Ops..failed to interpret the value: %v\n", err)
+					}
+					typedValue[itemKey] = mocker.Generate(functionName, params)
+				} else {
+					return fmt.Errorf("Value '%v' is not a string or map", item)
+				}
+			}
 		default:
-			return fmt.Errorf("Value '%v' is not a string or map", value)
+			return fmt.Errorf("Value '%v' is not a string or map", typedValue)
 		}
 	}
 	return nil
