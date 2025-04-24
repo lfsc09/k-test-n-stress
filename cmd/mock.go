@@ -27,7 +27,7 @@ var mockCmd = &cobra.Command{
 			log.Fatalln("Please provide only one of the two options: --parse or --parseFrom")
 		}
 
-		// Parse single string object
+		// Parse single string object (From CLI)
 		if parseStr != "" {
 			var parseMap map[string]interface{}
 			if err := json.Unmarshal([]byte(parseStr), &parseMap); err != nil {
@@ -44,6 +44,7 @@ var mockCmd = &cobra.Command{
 			}
 		}
 
+		// Parse from files
 		if len(parseFromFiles) != 0 {
 			var wg sync.WaitGroup
 			for _, filename := range parseFromFiles {
@@ -101,31 +102,54 @@ func init() {
 	rootCmd.AddCommand(mockCmd)
 }
 
-/*
-The string type "value" interpreted from the JSON object can be:
-  - A mock function name (e.g. "Address.city")
-  - A mock function name with parameters (e.g. "Boolean.booleanWithChance:10")
-*/
-func interpretString(value string) (string, []string, error) {
-	explodedValue := strings.Split(value, ":")
-	if len(explodedValue) == 0 {
-		return "", nil, nil
-	} else if len(explodedValue) == 1 {
-		return explodedValue[0], nil, nil
-	} else {
-		return explodedValue[0], explodedValue[1:], nil
+// Splits a raw string of format "func:arg1:arg2:..."
+// It handles regex args wrapped with slashes (/.../) to avoid splitting inside them.
+// Returns: function name, and slice of parameter strings.
+func interpretString(rawValue string) (string, []string) {
+	if rawValue == "" {
+		return "", nil
 	}
+	var parts []string
+	var buf strings.Builder
+	inRegex := false
+	for _, char := range rawValue {
+		if char == '/' {
+			inRegex = !inRegex
+			// Always include slash
+			buf.WriteByte(byte(char))
+			continue
+		}
+		// If ':' outside regex — treat as delimiter
+		if char == ':' && !inRegex {
+			parts = append(parts, buf.String())
+			// Start building next segment
+			buf.Reset()
+			continue
+		}
+		// Default: build the current token
+		buf.WriteByte(byte(char))
+	}
+	// Add the final piece (there's no trailing `:`)
+	if buf.Len() > 0 {
+		parts = append(parts, buf.String())
+	}
+	return parts[0], parts[1:]
 }
 
+// Iterates through the parsed json map and processes each value.
+// It replaces string values with generated mock data based on the function name and parameters.
+// It handles nested maps and arrays of strings or maps.
+// Returns an error if any value is not a string or map.
 func processMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 	for objKey, objValue := range parseMap {
 		switch typedValue := objValue.(type) {
 		case string:
-			functionName, params, err := interpretString(typedValue)
+			functionName, params := interpretString(typedValue)
+			mockValue, err := mocker.Generate(functionName, params)
 			if err != nil {
-				log.Printf("Ops..failed to interpret the value: %v\n", err)
+				return err
 			}
-			parseMap[objKey] = mocker.Generate(functionName, params)
+			parseMap[objKey] = mockValue
 		case map[string]interface{}:
 			err := processMap(typedValue, mocker)
 			if err != nil {
@@ -133,17 +157,18 @@ func processMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 			}
 		case []interface{}:
 			for itemKey, item := range typedValue {
-				if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemStr, ok := item.(string); ok {
+					functionName, params := interpretString(itemStr)
+					mockValue, err := mocker.Generate(functionName, params)
+					if err != nil {
+						return err
+					}
+					typedValue[itemKey] = mockValue
+				} else if itemMap, ok := item.(map[string]interface{}); ok {
 					err := processMap(itemMap, mocker)
 					if err != nil {
 						return err
 					}
-				} else if itemStr, ok := item.(string); ok {
-					functionName, params, err := interpretString(itemStr)
-					if err != nil {
-						log.Printf("Ops..failed to interpret the value: %v\n", err)
-					}
-					typedValue[itemKey] = mocker.Generate(functionName, params)
 				} else {
 					return fmt.Errorf("Value '%v' is not a string or map", item)
 				}
