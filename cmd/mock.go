@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,15 +20,20 @@ var mockCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		saveTo := viper.GetBool("saveTo")
 		parseStr := viper.GetString("parse")
-		parseFromFiles := viper.GetStringSlice("parseFrom")
+		parseFrom := viper.GetString("parseFrom")
+		preserveFolderStructure := viper.GetBool("preserveFolderStructure")
 
-		if parseStr == "" && len(parseFromFiles) == 0 {
+		if parseStr == "" && parseFrom == "" {
 			log.Fatalln("Nothing to be parsed. Ask for help -h or --help")
-		} else if parseStr != "" && len(parseFromFiles) != 0 {
+		} else if parseStr != "" && parseFrom != "" {
 			log.Fatalln("Please provide only one of the two options: --parse or --parseFrom")
 		}
 
-		// Parse single string object (From CLI)
+		if preserveFolderStructure && parseFrom == "" {
+			log.Fatalln("The --preserveFolderStructure option is only available when using --parseFrom")
+		}
+
+		// Parse single string object from `--parseStr`
 		if parseStr != "" {
 			var parseMap map[string]interface{}
 			if err := json.Unmarshal([]byte(parseStr), &parseMap); err != nil {
@@ -39,33 +45,48 @@ var mockCmd = &cobra.Command{
 				log.Fatalln(err)
 			}
 
-			if err := processOutput(saveTo, "mocked-data.json", &parseMap); err != nil {
-				log.Fatalln(err)
+			if saveTo {
+				var mu sync.Mutex
+				createdDirs := make(map[string]bool, 1)
+				if err := toFile(false, "mocked-data.json", "", &parseMap, &mu, &createdDirs); err != nil {
+					log.Fatalln(err)
+					return
+				}
+			} else {
+				if err := toStdout(&parseMap); err != nil {
+					log.Fatalln(err)
+					return
+				}
 			}
 		}
 
-		// Parse from files
-		if len(parseFromFiles) != 0 {
+		// Parse object from `--parseFrom` files
+		if parseFrom != "" {
+			foundTemplateFiles, err := findTemplateFiles(parseFrom)
+			if err != nil {
+				log.Fatalf("Failed to find template files from the provided --parseFrom <string>: %v\n", err)
+			}
+			if len(foundTemplateFiles) == 0 {
+				log.Fatalf("No template files found in the provided --parseFrom <string>: %v\n", parseFrom)
+			}
+
 			var wg sync.WaitGroup
-			for _, filename := range parseFromFiles {
+			var mu sync.Mutex
+			createdDirs := make(map[string]bool)
+			for _, inPath := range foundTemplateFiles {
 
 				wg.Add(1)
-				go func(filename string) {
+				go func(inPath string) {
 					defer wg.Done()
 
-					if !strings.HasSuffix(filename, ".template.json") {
-						log.Printf("File '%s' must have a .template.json extension\n", filename)
-						return
-					}
-
-					fileContent, err := os.ReadFile(filename)
+					templateFileContent, err := os.ReadFile(inPath)
 					if err != nil {
 						log.Printf("Opss..failed to read --parseFrom <file>: %v\n", err)
 						return
 					}
 
 					var parseMap map[string]interface{}
-					if err = json.Unmarshal(fileContent, &parseMap); err != nil {
+					if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
 						log.Printf("Opss..failed to parse JSON from the provided --parseFrom <file>: %v\n", err)
 						return
 					}
@@ -76,33 +97,39 @@ var mockCmd = &cobra.Command{
 						return
 					}
 
-					outFilename := strings.Replace(filename, ".template.json", ".json", 1)
-					log.Printf("Parsing file %v -> %v\n", filename, outFilename)
-					if err := processOutput(saveTo, outFilename, &parseMap); err != nil {
-						log.Println(err)
-						return
+					if saveTo {
+						if err := toFile(preserveFolderStructure, inPath, parseFrom, &parseMap, &mu, &createdDirs); err != nil {
+							log.Println(err)
+							return
+						}
+					} else {
+						if err := toStdout(&parseMap); err != nil {
+							log.Println(err)
+							return
+						}
 					}
-				}(filename)
+				}(inPath)
 			}
 			wg.Wait()
-			log.Println("All files processed")
 		}
 	},
 }
 
 func init() {
-	mockCmd.Flags().String("saveTo", "", "Write mock data to '*.json' files")
+	mockCmd.Flags().String("saveTo", "", "Write mock data to './out/*.json' files")
 	mockCmd.Flags().String("parse", "", "Parse json object as string")
-	mockCmd.Flags().String("parseFrom", "", "Parse mock data from '.template.json' files")
+	mockCmd.Flags().String("parseFrom", "", "Parse mock data from '.template.json' files from a path, directory, or glob")
+	mockCmd.Flags().Bool("preserveFolderStructure", false, "Preserve folder structure when saving files or flatten them")
 
 	viper.BindPFlag("saveTo", mockCmd.Flags().Lookup("saveTo"))
 	viper.BindPFlag("parse", mockCmd.Flags().Lookup("parse"))
 	viper.BindPFlag("parseFrom", mockCmd.Flags().Lookup("parseFrom"))
+	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
 
 	rootCmd.AddCommand(mockCmd)
 }
 
-// Splits a raw string of format "func:arg1:arg2:..."
+// Splits a raw string of format "func:arg1:arg2:...".
 // It handles regex args wrapped with slashes (/.../) to avoid splitting inside them.
 // Returns: function name, and slice of parameter strings.
 func interpretString(rawValue string) (string, []string) {
@@ -180,32 +207,94 @@ func processMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 	return nil
 }
 
-func processOutput(saveTo bool, filename string, result *map[string]interface{}) error {
-	if saveTo {
-		return toFile(filename, result)
-	} else {
-		return toStdout(result)
+// Returns all *.template.json files from a path, directory, or glob.
+// It's recursive for directories, and respects any wildcard pattern.
+func findTemplateFiles(input string) ([]string, error) {
+	var matchedFiles []string
+	info, err := os.Stat(input)
+	// Check if input exists and is a directory — if so, walk recursively
+	if err == nil && info.IsDir() {
+		err := filepath.Walk(input, func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !fi.IsDir() && strings.HasSuffix(path, ".template.json") {
+				matchedFiles = append(matchedFiles, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("Error walking through directory: %v", err)
+		}
+		return matchedFiles, nil
 	}
+	// If it's not a directory, use filepath.Glob to match pattern (may include wildcard)
+	globMatches, err := filepath.Glob(input)
+	if err != nil {
+		return nil, fmt.Errorf("Error matching pattern: %v", err)
+	}
+	for _, file := range globMatches {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() && strings.HasSuffix(file, ".template.json") {
+			matchedFiles = append(matchedFiles, file)
+		}
+	}
+	return matchedFiles, nil
 }
 
-func toFile(filename string, result *map[string]interface{}) error {
+// Writes the generated mock data to a file.
+// It creates the directory structure if it doesn't exist.
+// If `preserveFolderStructure` is true, it keeps the original folder structure.
+func toFile(preserveFolderStructure bool, inPath string, parseFrom string, result *map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
 	prettyJSON, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("Error marshalling JSON: %v", err)
 	}
 
-	err = os.WriteFile(filename, prettyJSON, 0644)
+	outName := strings.Replace(filepath.Base(inPath), ".template.json", ".json", 1)
+	var outPath string
+
+	if preserveFolderStructure {
+		relPath, err := filepath.Rel(parseFrom, inPath)
+		if err != nil {
+			return fmt.Errorf("Failed to get relative path: %v\n", err)
+		}
+		relPath = strings.Replace(relPath, ".template.json", ".json", 1)
+		outPath = filepath.Join("out", relPath)
+	} else {
+		outPath = filepath.Join("out", outName)
+	}
+
+	// Any created folders must be Thread-safe
+	dir := filepath.Dir(outPath)
+	mu.Lock()
+	if !(*createdDirs)[dir] {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			mu.Unlock()
+			return fmt.Errorf("Failed to create directory '%s': %v\n", dir, err)
+		}
+		(*createdDirs)[dir] = true
+	}
+	mu.Unlock()
+
+	err = os.WriteFile(outPath, prettyJSON, 0644)
 	if err != nil {
-		return fmt.Errorf("Failed to write result to '%s': %v", filename, err)
+		return fmt.Errorf("Failed to write result to '%s': %v", outPath, err)
 	}
 	return nil
 }
 
+// Writes the generated mock data to stdout.
+// It formats the JSON with indentation for better readability.
 func toStdout(result *map[string]interface{}) error {
 	prettyJSON, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("Error marshalling JSON: %v", err)
 	}
+
 	fmt.Println(string(prettyJSON))
 	return nil
 }
