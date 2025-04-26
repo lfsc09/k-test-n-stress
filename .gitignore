@@ -24,6 +24,11 @@ go.work.sum
 # env file
 .env
 
-# test files
+# execution input files
 **/config.yaml
 **/*.template.json
+
+# any folders that are not source code
+*/
+!/cmd
+!/mock
