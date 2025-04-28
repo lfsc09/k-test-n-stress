@@ -345,21 +345,19 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 			decor.Any(func(s decor.Statistics) string {
 				current := "unknown state"
 				if s.Aborted {
-					current = " failed "
+					current = "failed"
+				} else if s.Current == steps-4 {
+					current = "reading"
+				} else if s.Current == steps-3 {
+					current = "parsing"
+				} else if s.Current == steps-2 {
+					current = "processing"
+				} else if s.Current == steps-1 {
+					current = "writing"
+				} else if s.Completed {
+					current = "done"
 				}
-				switch s.Current {
-				case steps - 4:
-					current = " reading "
-				case steps - 3:
-					current = " parsing "
-				case steps - 2:
-					current = " processing "
-				case steps - 1:
-					current = " writing "
-				case steps:
-					current = " done "
-				}
-				return fmt.Sprintf("  %s  ", current)
+				return fmt.Sprintf("   %s   ", current)
 			}, decor.WCSyncWidth),
 			decor.CountersNoUnit(" %d/%d ", decor.WCSyncWidthR),
 		),
