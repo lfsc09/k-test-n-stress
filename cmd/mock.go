@@ -58,7 +58,8 @@ var mockCmd = &cobra.Command{
 
 		// Parse single string object from `--parseStr`
 		if parseStr != "" {
-			bar := giveMeABar("CLI", 3, mpbHandler)
+			outPath := ""
+			bar := giveMeABar("CLI", &outPath, 3, mpbHandler)
 			var parseMap map[string]interface{}
 			if err := json.Unmarshal([]byte(parseStr), &parseMap); err != nil {
 				log.Fatalf("Opss..failed to parse JSON from the provided --parse <string>: %v\n", err)
@@ -73,7 +74,7 @@ var mockCmd = &cobra.Command{
 
 			var mu sync.Mutex
 			createdDirs := make(map[string]bool, 1)
-			if err := toFile(false, "mocked-data.json", "", &parseMap, &mu, &createdDirs); err != nil {
+			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMap, &mu, &createdDirs); err != nil {
 				log.Fatalln(err)
 				return
 			}
@@ -94,10 +95,11 @@ var mockCmd = &cobra.Command{
 			var mu sync.Mutex
 			createdDirs := make(map[string]bool)
 			for _, inPath := range foundTemplateFiles {
-				bar := giveMeABar(inPath, 4, mpbHandler)
 				wg.Add(1)
 				go func(inPath string) {
 					defer wg.Done()
+					outPath := ""
+					bar := giveMeABar(inPath, &outPath, 4, mpbHandler)
 
 					// Read the template file (STEP)
 					templateFileContent, err := os.ReadFile(inPath)
@@ -124,7 +126,7 @@ var mockCmd = &cobra.Command{
 					bar.Increment()
 
 					// Write the processed map to a file (STEP)
-					if err := toFile(preserveFolderStructure, inPath, parseFrom, &parseMap, &mu, &createdDirs); err != nil {
+					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMap, &mu, &createdDirs); err != nil {
 						log.Println(err)
 						return
 					}
@@ -276,13 +278,12 @@ func findTemplateFiles(input string) ([]string, error) {
 // Writes the generated mock data to a file.
 // It creates the directory structure if it doesn't exist.
 // If `preserveFolderStructure` is true, it keeps the original folder structure.
-func toFile(preserveFolderStructure bool, inPath string, parseFrom string, result *map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
+func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFrom string, result *map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
 	prettyJSON, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("Error marshalling JSON: %v", err)
 	}
 
-	var outPath string
 	if preserveFolderStructure {
 		normalizedParseFrom, err := normalizeParseFrom(parseFrom)
 		if err != nil {
@@ -293,14 +294,14 @@ func toFile(preserveFolderStructure bool, inPath string, parseFrom string, resul
 			return fmt.Errorf("Failed to get relative path: %v\n", err)
 		}
 		relPath = strings.Replace(relPath, ".template.json", ".json", 1)
-		outPath = filepath.Join("out", relPath)
+		*outPath = filepath.Join("out", relPath)
 	} else {
 		outName := strings.Replace(filepath.Base(inPath), ".template.json", ".json", 1)
-		outPath = filepath.Join("out", outName)
+		*outPath = filepath.Join("out", outName)
 	}
 
 	// Any created folders must be Thread-safe
-	dir := filepath.Dir(outPath)
+	dir := filepath.Dir(*outPath)
 	mu.Lock()
 	if !(*createdDirs)[dir] {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -311,7 +312,7 @@ func toFile(preserveFolderStructure bool, inPath string, parseFrom string, resul
 	}
 	mu.Unlock()
 
-	err = os.WriteFile(outPath, prettyJSON, 0644)
+	err = os.WriteFile(*outPath, prettyJSON, 0644)
 	if err != nil {
 		return fmt.Errorf("Failed to write result to '%s': %v", outPath, err)
 	}
@@ -332,8 +333,9 @@ func normalizeParseFrom(input string) (string, error) {
 	return base, nil
 }
 
-func giveMeABar(taskName string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar {
+func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar {
 	startElapsedTime := time.Now()
+	var elapsedTime time.Duration
 	bar := mpbHandler.AddBar(steps,
 		mpb.PrependDecorators(
 			decor.Name(taskName, decor.WC{W: len(taskName) + 2, C: decor.DindentRight}),
@@ -358,18 +360,20 @@ func giveMeABar(taskName string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar
 		),
 		mpb.AppendDecorators(
 			decor.Any(func(s decor.Statistics) string {
-				elapsed := time.Since(startElapsedTime)
+				if !s.Completed {
+					elapsedTime = time.Since(startElapsedTime)
+				}
 				switch {
-				case elapsed < time.Millisecond:
-					return fmt.Sprintf("[%.2fµs]", float64(elapsed.Microseconds()))
-				case elapsed < time.Second:
-					return fmt.Sprintf("[%.2fms]", float64(elapsed.Milliseconds()))
+				case elapsedTime < time.Millisecond:
+					return fmt.Sprintf("[%.2fµs]", float64(elapsedTime.Microseconds()))
+				case elapsedTime < time.Second:
+					return fmt.Sprintf("[%.2fms]", float64(elapsedTime.Milliseconds()))
 				default:
-					return fmt.Sprintf("[%.2fs]", elapsed.Seconds())
+					return fmt.Sprintf("[%.2fs]", elapsedTime.Seconds())
 				}
 			}),
 			decor.Any(func(s decor.Statistics) string {
-				info, err := os.Stat(taskName)
+				info, err := os.Stat(*outPath)
 				if err != nil {
 					return "[N/A]"
 				}
