@@ -76,7 +76,6 @@ var mockCmd = &cobra.Command{
 			createdDirs := make(map[string]bool, 1)
 			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMap, &mu, &createdDirs); err != nil {
 				log.Fatalln(err)
-				return
 			}
 			bar.Increment()
 		}
@@ -105,6 +104,7 @@ var mockCmd = &cobra.Command{
 					templateFileContent, err := os.ReadFile(inPath)
 					if err != nil {
 						log.Printf("Opss..failed to read --parseFrom <file>: %v\n", err)
+						bar.Abort(false)
 						return
 					}
 					bar.Increment()
@@ -113,6 +113,7 @@ var mockCmd = &cobra.Command{
 					var parseMap map[string]interface{}
 					if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
 						log.Printf("Opss..failed to parse JSON from the provided --parseFrom <file>: %v\n", err)
+						bar.Abort(false)
 						return
 					}
 					bar.Increment()
@@ -121,6 +122,7 @@ var mockCmd = &cobra.Command{
 					mocker := mock.New()
 					if err := processMap(parseMap, mocker); err != nil {
 						log.Println(err)
+						bar.Abort(false)
 						return
 					}
 					bar.Increment()
@@ -128,6 +130,7 @@ var mockCmd = &cobra.Command{
 					// Write the processed map to a file (STEP)
 					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMap, &mu, &createdDirs); err != nil {
 						log.Println(err)
+						bar.Abort(false)
 						return
 					}
 					bar.Increment()
@@ -338,25 +341,27 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 	var elapsedTime time.Duration
 	bar := mpbHandler.AddBar(steps,
 		mpb.PrependDecorators(
-			decor.Name(taskName, decor.WC{W: len(taskName) + 2, C: decor.DindentRight}),
+			decor.Name(taskName, decor.WCSyncWidthR),
 			decor.Any(func(s decor.Statistics) string {
-				current := s.Current
-				switch current {
-				case steps - 4:
-					return "reading"
-				case steps - 3:
-					return "parsing"
-				case steps - 2:
-					return "processing"
-				case steps - 1:
-					return "writing"
-				case steps:
-					return "done"
-				default:
-					return "unknown state"
+				current := "unknown state"
+				if s.Aborted {
+					current = " failed "
 				}
-			}, decor.WCSyncSpaceR),
-			decor.CountersNoUnit("%d/%d", decor.WCSyncSpace),
+				switch s.Current {
+				case steps - 4:
+					current = " reading "
+				case steps - 3:
+					current = " parsing "
+				case steps - 2:
+					current = " processing "
+				case steps - 1:
+					current = " writing "
+				case steps:
+					current = " done "
+				}
+				return fmt.Sprintf("  %s  ", current)
+			}, decor.WCSyncWidth),
+			decor.CountersNoUnit(" %d/%d ", decor.WCSyncWidthR),
 		),
 		mpb.AppendDecorators(
 			decor.Any(func(s decor.Statistics) string {
@@ -365,28 +370,28 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 				}
 				switch {
 				case elapsedTime < time.Millisecond:
-					return fmt.Sprintf("[%.2fµs]", float64(elapsedTime.Microseconds()))
+					return fmt.Sprintf(" [%.2fµs] ", float64(elapsedTime.Microseconds()))
 				case elapsedTime < time.Second:
-					return fmt.Sprintf("[%.2fms]", float64(elapsedTime.Milliseconds()))
+					return fmt.Sprintf(" [%.2fms] ", float64(elapsedTime.Milliseconds()))
 				default:
-					return fmt.Sprintf("[%.2fs]", elapsedTime.Seconds())
+					return fmt.Sprintf(" [%.2fs] ", elapsedTime.Seconds())
 				}
-			}),
+			}, decor.WCSyncWidth),
 			decor.Any(func(s decor.Statistics) string {
 				info, err := os.Stat(*outPath)
 				if err != nil {
-					return "[N/A]"
+					return " [N/A] "
 				}
 				fileSize := info.Size()
 				switch {
 				case fileSize >= GB:
-					return fmt.Sprintf("[%.2fGB]", float64(fileSize)/float64(GB))
+					return fmt.Sprintf(" [%.2fGB] ", float64(fileSize)/float64(GB))
 				case fileSize >= MB:
-					return fmt.Sprintf("[%.2fMB]", float64(fileSize)/float64(MB))
+					return fmt.Sprintf(" [%.2fMB] ", float64(fileSize)/float64(MB))
 				default:
-					return fmt.Sprintf("[%.2fKB]", float64(fileSize)/float64(KB))
+					return fmt.Sprintf(" [%.2fKB] ", float64(fileSize)/float64(KB))
 				}
-			}),
+			}, decor.WCSyncWidth),
 		),
 	)
 	return bar
