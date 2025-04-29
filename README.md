@@ -36,11 +36,10 @@ ktns mock <flags>
 
 #### Flags
 
-- `--parse`: Parse the template from the command line as a string `json` objsect.
-- `--parseFrom`: Parse the template from one or more `.template.json` files. _(Separated by space)_
-- `--saveTo`: If set, it will:
-  - In case of `--parse`, save the result in a `mock-data.json` file.
-  - In case of `--parseFrom`, save the result in its correspondent `.json` filename. _(Without `.template` part)_
+- `--list`: If set, it will list all available mock functions.
+- `--parseStr`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
+- `--parseFrom`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
+- `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
 
 #### Example (`--parse`)
 
@@ -62,21 +61,10 @@ _Multiple files may be passed._
 ```
 
 ```bash
-ktns mock --parseFrom example.template.json
-```
-
-#### Example (`saveTo`)
-
-Will generate a `mock-data.json` file with the result.
-
-```bash
-ktns mock --parse '{ "company": "Company.name", "employee": { "name": "Person.fullName" }}' --saveTo
-```
-
-Will generate `example.json` file.
-
-```bash
-ktns mock --parseFrom example.template.json --saveTo
+  ktns mock --parseFrom example.template.json
+  ktns mock --parseFrom "*.template.json"
+  ktns mock --parseFrom "test/templates/*.template.json"
+  ktns mock --parseFrom "test/templates" --preserveFolderStructure
 ```
 
 #### The Json template object
