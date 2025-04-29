@@ -5,7 +5,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
+var execFile string
 var rootCmd = &cobra.Command{
 	Use:   "ktns",
 	Short: "K Test N Stress is a tool to generate mock data and testing/stressing HTTP endpoints.",
@@ -19,14 +19,14 @@ func Execute() error {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "file", "f", "", "config file (default is ./config.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&execFile, "file", "f", "execute.yaml", "ktns execution filename, to run without CLI flags.")
 }
 
 func initConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile) // Use config file from the flag.
+	if execFile != "" {
+		viper.SetConfigFile(execFile) // Use exec file from the flag.
 	} else {
-		viper.SetConfigName("config") // Expected name of config file (without extension)
+		viper.SetConfigName("execute") // Expected name of execution file (without extension)
 		viper.SetConfigType("yaml")
 		viper.AddConfigPath(".") // Find at current directory.
 	}

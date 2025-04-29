@@ -1,202 +1,190 @@
 package cmd
 
 import (
-	"bytes"
-	"io"
-	"log"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/mock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestInterpretString(t *testing.T) {
+type MockCmdTestSuite struct {
+	suite.Suite
+}
+
+func TestMockCmdTestSuite(t *testing.T) {
+	suite.Run(t, new(MockCmdTestSuite))
+}
+
+/*
+TEST "interpretString" function
+*/
+func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
 	tests := []struct {
-		input    string
-		funcName string
-		params   []string
-		err      error
+		input            string
+		expectedFuncName string
+		expectedParams   []string
 	}{
-		{"Address.city", "Address.city", nil, nil},
-		{"Boolean.booleanWithChance:10", "Boolean.booleanWithChance", []string{"10"}, nil},
-		{"Function.with:multiple:params", "Function.with", []string{"multiple", "params"}, nil},
-		{"", "", nil, nil},
+		{"", "", nil},
+		{"Address.city", "Address.city", []string{}},
+		{"Boolean.booleanWithChance:10", "Boolean.booleanWithChance", []string{"10"}},
+		{"Function.with:multiple:params", "Function.with", []string{"multiple", "params"}},
+		{"Regex.regex://", "Regex.regex", []string{"//"}},
+		{"Regex.regex:/[a-z0-9]{1,64}/", "Regex.regex", []string{"/[a-z0-9]{1,64}/"}},
+		{"Regex.regex:/[a-z0-9]{1,64}/:param2", "Regex.regex", []string{"/[a-z0-9]{1,64}/", "param2"}},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			funcName, params, err := interpretString(tt.input)
-			assert.Equal(t, tt.funcName, funcName)
-			assert.Equal(t, tt.params, params)
-			assert.Equal(t, tt.err, err)
-		})
+		funcName, params := interpretString(tt.input)
+		assert.Equal(suite.T(), tt.expectedFuncName, funcName)
+		assert.Equal(suite.T(), tt.expectedParams, params)
 	}
 }
 
-func TestProcessMap(t *testing.T) {
-	// Redirect log output to avoid printing during tests
-	oldLogger := log.Writer()
-	log.SetOutput(io.Discard)
-	defer log.SetOutput(oldLogger)
-
-	// Setup a mock implementation
-	mockObj := mock.New()
-
+func (suite *MockCmdTestSuite) TestProcessMap_ValidInputs() {
 	tests := []struct {
-		name    string
-		input   map[string]interface{}
-		wantErr bool
+		testName string
+		input    map[string]interface{}
 	}{
 		{
-			name: "string value",
+			testName: "string value",
 			input: map[string]interface{}{
 				"key": "Address.city",
 			},
-			wantErr: false,
 		},
 		{
-			name: "nested map",
+			testName: "string value with params",
 			input: map[string]interface{}{
-				"nested": map[string]interface{}{
+				"key": "Boolean.booleanWithChance:10",
+			},
+		},
+		{
+			testName: "2 string values",
+			input: map[string]interface{}{
+				"key":  "Address.city",
+				"key2": "Address.state",
+			},
+		},
+		{
+			testName: "nested map",
+			input: map[string]interface{}{
+				"level": map[string]interface{}{
 					"key": "Address.city",
 				},
 			},
-			wantErr: false,
 		},
 		{
-			name: "array of strings",
+			testName: "nested map with 2 values",
 			input: map[string]interface{}{
-				"array": []interface{}{"Address.city", "Name.firstName"},
+				"level": map[string]interface{}{
+					"key":  "Address.city",
+					"key2": "Address.state",
+				},
 			},
-			wantErr: false,
 		},
 		{
-			name: "array of maps",
+			testName: "2 nested map on same level",
+			input: map[string]interface{}{
+				"level": map[string]interface{}{
+					"key": "Address.city",
+				},
+				"level2": map[string]interface{}{
+					"key": "Address.city",
+				},
+			},
+		},
+		{
+			testName: "2 nested map, one inside the other",
+			input: map[string]interface{}{
+				"level_0": map[string]interface{}{
+					"key": "Address.city",
+					"level_1": map[string]interface{}{
+						"key": "Address.city",
+					},
+				},
+			},
+		},
+		{
+			testName: "arrays of 2 string values",
+			input: map[string]interface{}{
+				"array": []interface{}{"Address.city", "Person.firstName"},
+			},
+		},
+		{
+			testName: "2 arrays of 2 strings values",
+			input: map[string]interface{}{
+				"array":  []interface{}{"Address.city", "Person.firstName"},
+				"array2": []interface{}{"Address.city", "Person.firstName"},
+			},
+		},
+		{
+			testName: "nested map with array of strings inside",
+			input: map[string]interface{}{
+				"level": map[string]interface{}{
+					"key":   "Address.city",
+					"array": []interface{}{"Address.city", "Person.firstName"},
+				},
+			},
+		},
+		{
+			testName: "array of nested maps",
 			input: map[string]interface{}{
 				"array": []interface{}{
 					map[string]interface{}{"key": "Address.city"},
+					map[string]interface{}{"key": "Person.firstName", "key2": "Person.lastName"},
 				},
 			},
-			wantErr: false,
 		},
 		{
-			name: "invalid type in array",
+			testName: "array of nested maps with more maps and arrays inside",
 			input: map[string]interface{}{
-				"array": []interface{}{123},
+				"array": []interface{}{
+					map[string]interface{}{
+						"key":   "Address.city",
+						"array": []interface{}{"Address.city", "Person.firstName"},
+					},
+					map[string]interface{}{
+						"key":  "Person.firstName",
+						"key2": "Person.lastName",
+						"map": map[string]interface{}{
+							"key":   "Address.city",
+							"array": []interface{}{"Address.city", "Person.firstName", map[string]interface{}{"key": "Person.lastName"}},
+						},
+					},
+				},
 			},
-			wantErr: true,
-		},
-		{
-			name:    "invalid type",
-			input:   map[string]interface{}{"key": 123},
-			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a copy of the input to avoid modifying the test case
-			inputCopy := make(map[string]interface{})
-			for k, v := range tt.input {
-				inputCopy[k] = v
-			}
-
-			err := processMap(inputCopy, mockObj)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
+		mockObj := mock.New()
+		err := processMap(tt.input, mockObj)
+		assert.NoError(suite.T(), err)
 	}
 }
 
-func TestProcessOutput(t *testing.T) {
-	data := map[string]interface{}{"key": "value"}
-
-	t.Run("to stdout", func(t *testing.T) {
-		oldStdout := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-
-		err := processOutput(false, "test.json", &data)
-		w.Close()
-		os.Stdout = oldStdout
-
-		var buf bytes.Buffer
-		io.Copy(&buf, r)
-		output := buf.String()
-
-		assert.NoError(t, err)
-		assert.Contains(t, output, `"key": "value"`)
-	})
-
-	t.Run("to file", func(t *testing.T) {
-		// Create a temporary directory
-		tempDir, err := os.MkdirTemp("", "test")
-		assert.NoError(t, err)
-		defer os.RemoveAll(tempDir)
-
-		filename := filepath.Join(tempDir, "test.json")
-
-		err = processOutput(true, filename, &data)
-		assert.NoError(t, err)
-
-		// Check if file exists and contains the expected content
-		content, err := os.ReadFile(filename)
-		assert.NoError(t, err)
-		assert.Contains(t, string(content), `"key": "value"`)
-	})
-}
-
-func TestToFile(t *testing.T) {
-	data := map[string]interface{}{"key": "value"}
-
-	// Create a temporary directory
-	tempDir, err := os.MkdirTemp("", "test")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tempDir)
-
-	filename := filepath.Join(tempDir, "test.json")
-
-	err = toFile(filename, &data)
-	assert.NoError(t, err)
-
-	// Check if file exists and contains the expected content
-	content, err := os.ReadFile(filename)
-	assert.NoError(t, err)
-	assert.Contains(t, string(content), `"key": "value"`)
-
-	// Test error handling with invalid path
-	err = toFile("/invalid/path/test.json", &data)
-	assert.Error(t, err)
-}
-
-func TestToStdout(t *testing.T) {
-	data := map[string]interface{}{"key": "value"}
-
-	// Redirect stdout
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := toStdout(&data)
-	w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	output := buf.String()
-
-	assert.NoError(t, err)
-	assert.Contains(t, output, `"key": "value"`)
-
-	// Test marshaling error
-	invalidData := map[string]interface{}{
-		"invalid": make(chan int), // channels can't be marshaled to JSON
+func (suite *MockCmdTestSuite) TestProcessMap_InvalidInputs() {
+	tests := []struct {
+		testName string
+		input    map[string]interface{}
+	}{
+		{
+			testName: "invalid value in map [integer value]",
+			input: map[string]interface{}{
+				"key": 123,
+			},
+		},
+		{
+			testName: "invalid type in array [integer value]",
+			input: map[string]interface{}{
+				"array": []interface{}{123},
+			},
+		},
 	}
-	err = toStdout(&invalidData)
-	assert.Error(t, err)
+
+	for _, tt := range tests {
+		mockObj := mock.New()
+		err := processMap(tt.input, mockObj)
+		assert.Error(suite.T(), err)
+	}
 }
