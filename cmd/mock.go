@@ -25,11 +25,28 @@ const (
 
 var mockCmd = &cobra.Command{
 	Use:   "mock",
-	Short: "Generate mock data based on requested function names in the values of the parsed json object",
+	Short: "Generate mock data based from an object string or from template files",
+	Long: `Generate mock data based on --parseStr or --parseFrom options.
+Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
+List available mock functions with --list.
+
+Example:
+  ktns mock --parseStr '{"name":"name:5","age":"number:1:100"}'
+  ktns mock --parseFrom "*.template.json"
+  ktns mock --parseFrom "test/templates/*.template.json"
+  ktns mock --parseFrom "test/templates" --preserveFolderStructure
+	`,
 	Run: func(cmd *cobra.Command, args []string) {
+		list := viper.GetBool("list")
 		parseStr := viper.GetString("parse")
 		parseFrom := viper.GetString("parseFrom")
 		preserveFolderStructure := viper.GetBool("preserveFolderStructure")
+
+		if list {
+			mocker := mock.New()
+			mocker.List()
+			return
+		}
 
 		if parseStr == "" && parseFrom == "" {
 			log.Fatalln("Nothing to be parsed. Ask for help -h or --help")
@@ -144,10 +161,12 @@ var mockCmd = &cobra.Command{
 }
 
 func init() {
-	mockCmd.Flags().String("parse", "", "Parse json object as string")
-	mockCmd.Flags().String("parseFrom", "", "Parse mock data from '.template.json' files from a path, directory, or glob")
-	mockCmd.Flags().Bool("preserveFolderStructure", false, "Preserve folder structure when saving files or flatten them")
+	mockCmd.Flags().Bool("list", false, "if set, it will list all available mock functions")
+	mockCmd.Flags().String("parse", "", "pass a JSON object as a string. The mock data will be generated based on the provided object")
+	mockCmd.Flags().String("parseFrom", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found files")
+	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files")
 
+	viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
 	viper.BindPFlag("parse", mockCmd.Flags().Lookup("parse"))
 	viper.BindPFlag("parseFrom", mockCmd.Flags().Lookup("parseFrom"))
 	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
