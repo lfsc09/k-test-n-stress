@@ -41,15 +41,13 @@ ktns mock <flags>
 - `--parseFrom`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
 - `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
 
-#### Example (`--parse`)
+#### Example (`--parseStr`)
 
 ```bash
-ktns mock --parse '{ "company": "Company.name", "employee": { "name": "Person.fullName" }}'
+ktns mock --parseStr '{ "company": "Company.name", "employee": { "name": "Person.fullName" }}'
 ```
 
 #### Example (`--parseFrom`)
-
-_Multiple files may be passed._
 
 ```json
 {
@@ -81,7 +79,11 @@ The Json template informated have some limitations.
 Some of the mock functions accept additional parameters, and they may be informed by delimiting with `:`.
 
 ```bash
-ktns mock --parse '{ "words": "Loreum.words:5" }'
+ktns mock --parseStr '{ "words": "Loreum.words:5" }'
 ```
 
 #### List of mock functions
+
+```bash
+ktns mock --list
+```
