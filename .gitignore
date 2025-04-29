@@ -25,7 +25,7 @@ go.work.sum
 .env
 
 # execution input files
-**/config.yaml
+**/execute.yaml
 **/*.template.json
 
 # any folders that are not source code
