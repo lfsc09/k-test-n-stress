@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,11 +28,12 @@ var mockCmd = &cobra.Command{
 	Use:   "mock",
 	Short: "Generate mock data based from an object string or from template files",
 	Long: `Generate mock data based on --parseStr or --parseFrom options.
+Always call the mock function with the format {{ functionName::arg1:arg2:... }}, values not wrapped in double brackets will be considered raw values.
 Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
 List available mock functions with --list.
 
-Example:
-  ktns mock --parseStr '{"name":"name:5","age":"number:1:100"}'
+Examples:
+  ktns mock --parseStr '{"name":"{{ Person.name }}","age":"{{ Number.number::1:100 }}"}'
   ktns mock --parseFrom "*.template.json"
   ktns mock --parseFrom "test/templates/*.template.json"
   ktns mock --parseFrom "test/templates" --preserveFolderStructure
@@ -84,7 +86,7 @@ Example:
 			bar.Increment()
 
 			mocker := mock.New()
-			if err := processMap(parseMap, mocker); err != nil {
+			if err := processJsonMap(parseMap, mocker); err != nil {
 				log.Fatalln(err)
 			}
 			bar.Increment()
@@ -137,7 +139,7 @@ Example:
 
 					// Process the parsed map (STEP)
 					mocker := mock.New()
-					if err := processMap(parseMap, mocker); err != nil {
+					if err := processJsonMap(parseMap, mocker); err != nil {
 						log.Println(err)
 						bar.Abort(false)
 						return
@@ -177,7 +179,7 @@ func init() {
 // Splits a raw string of format "func:arg1:arg2:...".
 // It handles regex args wrapped with slashes (/.../) to avoid splitting inside them.
 // Returns: function name, and slice of parameter strings.
-func interpretString(rawValue string) (string, []string) {
+func extractMockMethod(rawValue string) (string, []string) {
 	if rawValue == "" {
 		return "", nil
 	}
@@ -185,7 +187,9 @@ func interpretString(rawValue string) (string, []string) {
 	var buf strings.Builder
 	inRegex := false
 
-	for _, char := range rawValue {
+	trimmed := strings.TrimSpace(rawValue)
+
+	for _, char := range trimmed {
 		if char == '/' {
 			inRegex = !inRegex
 			// Always include slash
@@ -211,36 +215,64 @@ func interpretString(rawValue string) (string, []string) {
 	return parts[0], parts[1:]
 }
 
+// Interprets a string value, checking if it contains a mock function between {{ }}.
+// If it does, it returns the function name and true.
+// If not, it returns the original string and false.
+func interpretString(rawValue string) (string, bool) {
+	if rawValue == "" {
+		return "", false
+	}
+
+	re := regexp.MustCompile(`^\s*{{\s*(.*?)\s*}}\s*$`)
+	matches := re.FindStringSubmatch(rawValue)
+
+	if len(matches) > 0 {
+		return matches[1], true
+	}
+
+	return rawValue, false
+}
+
 // Iterates through the parsed json map and processes each value.
 // It replaces string values with generated mock data based on the function name and parameters.
 // It handles nested maps and arrays of strings or maps.
 // Returns an error if any value is not a string or map.
-func processMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
+func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 	for objKey, objValue := range parseMap {
 		switch typedValue := objValue.(type) {
 		case string:
-			functionName, params := interpretString(typedValue)
+			interpretedValue, isMockFunction := interpretString(typedValue)
+			if !isMockFunction {
+				parseMap[objKey] = interpretedValue
+				continue
+			}
+			functionName, params := extractMockMethod(interpretedValue)
 			mockValue, err := mocker.Generate(functionName, params)
 			if err != nil {
 				return err
 			}
 			parseMap[objKey] = mockValue
 		case map[string]interface{}:
-			err := processMap(typedValue, mocker)
+			err := processJsonMap(typedValue, mocker)
 			if err != nil {
 				return err
 			}
 		case []interface{}:
 			for itemKey, item := range typedValue {
 				if itemStr, ok := item.(string); ok {
-					functionName, params := interpretString(itemStr)
+					interpretedValue, isMockFunction := interpretString(itemStr)
+					if !isMockFunction {
+						typedValue[itemKey] = interpretedValue
+						continue
+					}
+					functionName, params := extractMockMethod(interpretedValue)
 					mockValue, err := mocker.Generate(functionName, params)
 					if err != nil {
 						return err
 					}
 					typedValue[itemKey] = mockValue
 				} else if itemMap, ok := item.(map[string]interface{}); ok {
-					err := processMap(itemMap, mocker)
+					err := processJsonMap(itemMap, mocker)
 					if err != nil {
 						return err
 					}
@@ -328,7 +360,7 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 	if !(*createdDirs)[dir] {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			mu.Unlock()
-			return fmt.Errorf("Failed to create directory '%s': %v\n", dir, err)
+			return fmt.Errorf("Failed to create directory '%v': %v\n", dir, err)
 		}
 		(*createdDirs)[dir] = true
 	}
@@ -336,7 +368,7 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 
 	err = os.WriteFile(*outPath, prettyJSON, 0644)
 	if err != nil {
-		return fmt.Errorf("Failed to write result to '%s': %v", outPath, err)
+		return fmt.Errorf("Failed to write result to '%v': %v", outPath, err)
 	}
 	return nil
 }
