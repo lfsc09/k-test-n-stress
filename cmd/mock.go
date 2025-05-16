@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/mohae/deepcopy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/vbauerster/mpb/v8"
@@ -24,13 +26,35 @@ const (
 	GB = 1 << 30
 )
 
+var filenameNumberRegex = regexp.MustCompile(`\[(\d+)\]`)
+
 var mockCmd = &cobra.Command{
 	Use:   "mock",
 	Short: "Generate mock data based from an object string or from template files",
 	Long: `Generate mock data based on --parseStr or --parseFrom options.
-Always call the mock function with the format {{ functionName::arg1:arg2:... }}, values not wrapped in double brackets will be considered raw values.
-Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
-List available mock functions with --list.
+	
+* Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
+
+e.g.: Having a template folder structure like this:
+
+/company.template.json
+/assets
+  employee[10].template.json
+  building[2].template.json
+
+Will result in mocked results in the same structure.
+
+The mock functions:
+
+* List available mock functions with --list.
+* Always call the mock function with the format {{ functionName::arg1:arg2:... }}, values not wrapped in double brackets will be considered raw values.
+
+Controling the number of generated data:
+
+* Add --generate to specify the number of root objects to generate. (Only works with --parseStr)
+* When using --parseFrom, specify the desired number of root objects in the template file's name, between brackets. (e.g., "employees[5].template.json" will generate an array of 5 root objects)
+* For inner objects, also pass the desired number between brackets in the object's "key". (e.g. { "person[5]": { "name": "{{ Person.name }}" } } will generate an array of 5 inner objects)
+* To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.phoneNumber }}" } will generate an array of 5 phone numbers)
 
 Examples:
   ktns mock --parseStr '{"name":"{{ Person.name }}","age":"{{ Number.number::1:100 }}"}'
@@ -43,6 +67,7 @@ Examples:
 		parseStr := viper.GetString("parse")
 		parseFrom := viper.GetString("parseFrom")
 		preserveFolderStructure := viper.GetBool("preserveFolderStructure")
+		generate := viper.GetInt("generate")
 
 		if list {
 			mocker := mock.New()
@@ -62,6 +87,14 @@ Examples:
 
 		if preserveFolderStructure && parseFrom == "" {
 			log.Fatalln("The --preserveFolderStructure option is only available when using --parseFrom")
+		}
+
+		if generate > 1 && parseStr == "" {
+			log.Fatalln("The --generate option is only available when using --parseStr")
+		}
+
+		if generate <= 0 {
+			log.Fatalln("The --generate option must be greater than 0")
 		}
 
 		// Clean previous output directory
@@ -86,14 +119,19 @@ Examples:
 			bar.Increment()
 
 			mocker := mock.New()
-			if err := processJsonMap(parseMap, mocker); err != nil {
-				log.Fatalln(err)
+			parseMaps := make([]map[string]interface{}, generate)
+			for i := range generate {
+				cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
+				if err := processJsonMap(cpParseMap, mocker); err != nil {
+					log.Fatalln(err)
+				}
+				parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
 			}
 			bar.Increment()
 
 			var mu sync.Mutex
 			createdDirs := make(map[string]bool, 1)
-			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMap, &mu, &createdDirs); err != nil {
+			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMaps, &mu, &createdDirs); err != nil {
 				log.Fatalln(err)
 			}
 			bar.Increment()
@@ -126,6 +164,12 @@ Examples:
 						bar.Abort(false)
 						return
 					}
+					generate, err := extractDigitFromFilename(inPath)
+					if err != nil {
+						log.Printf("Opss..failed to extract digit from filename: %v\n", err)
+						bar.Abort(false)
+						return
+					}
 					bar.Increment()
 
 					// Parse the template file content (STEP)
@@ -139,15 +183,20 @@ Examples:
 
 					// Process the parsed map (STEP)
 					mocker := mock.New()
-					if err := processJsonMap(parseMap, mocker); err != nil {
-						log.Println(err)
-						bar.Abort(false)
-						return
+					parseMaps := make([]map[string]interface{}, generate)
+					for i := range generate {
+						cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
+						if err := processJsonMap(cpParseMap, mocker); err != nil {
+							log.Println(err)
+							bar.Abort(false)
+							return
+						}
+						parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
 					}
 					bar.Increment()
 
 					// Write the processed map to a file (STEP)
-					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMap, &mu, &createdDirs); err != nil {
+					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMaps, &mu, &createdDirs); err != nil {
 						log.Println(err)
 						bar.Abort(false)
 						return
@@ -163,15 +212,17 @@ Examples:
 }
 
 func init() {
-	mockCmd.Flags().Bool("list", false, "if set, it will list all available mock functions")
-	mockCmd.Flags().String("parse", "", "pass a JSON object as a string. The mock data will be generated based on the provided object")
+	mockCmd.Flags().Bool("list", false, "list all available mock functions")
+	mockCmd.Flags().String("parse", "", "pass a JSON object as a string. The mock data will be generated based on this provided template object")
 	mockCmd.Flags().String("parseFrom", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found files")
-	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files")
+	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parseFrom)")
+	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parseStr)")
 
 	viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
 	viper.BindPFlag("parse", mockCmd.Flags().Lookup("parse"))
 	viper.BindPFlag("parseFrom", mockCmd.Flags().Lookup("parseFrom"))
 	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
+	viper.BindPFlag("generate", mockCmd.Flags().Lookup("generate"))
 
 	rootCmd.AddCommand(mockCmd)
 }
@@ -332,8 +383,14 @@ func findTemplateFiles(input string) ([]string, error) {
 // Writes the generated mock data to a file.
 // It creates the directory structure if it doesn't exist.
 // If `preserveFolderStructure` is true, it keeps the original folder structure.
-func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFrom string, result *map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
-	prettyJSON, err := json.MarshalIndent(result, "", "  ")
+func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFrom string, result *[]map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
+	var prettyJSON []byte
+	var err error
+	if len(*result) == 1 {
+		prettyJSON, err = json.MarshalIndent((*result)[0], "", "  ")
+	} else {
+		prettyJSON, err = json.MarshalIndent(result, "", "  ")
+	}
 	if err != nil {
 		return fmt.Errorf("Error marshalling JSON: %v", err)
 	}
@@ -385,6 +442,24 @@ func normalizeParseFrom(input string) (string, error) {
 	// Otherwise, assume it's a file or glob pattern
 	base := filepath.Dir(input)
 	return base, nil
+}
+
+// Extracts a digit from a string in the format "strintcontent[<digit>]morecontentoptionally".
+// It returns the digit and an error if the format is invalid.
+func extractDigitFromFilename(str string) (int, error) {
+	if strings.Contains(str, "[") && strings.Contains(str, "]") {
+		matches := filenameNumberRegex.FindStringSubmatch(str)
+		// Check strict pattern: only digits inside brackets
+		if len(matches) < 2 {
+			return 0, fmt.Errorf("Don't use empty brackets [] in '%s'", str)
+		}
+		digit, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return 0, fmt.Errorf("Invalid content inside brackets [] in: '%s'", str)
+		}
+		return digit, nil
+	}
+	return 1, nil
 }
 
 func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar {
