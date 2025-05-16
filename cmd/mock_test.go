@@ -16,6 +16,28 @@ func TestMockCmdTestSuite(t *testing.T) {
 	suite.Run(t, new(MockCmdTestSuite))
 }
 
+func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
+	tests := []struct {
+		input            string
+		expectedFuncName string
+		expectedParams   []string
+	}{
+		{"", "", nil},
+		{"Address.city", "Address.city", []string{}},
+		{"Boolean.booleanWithChance:10", "Boolean.booleanWithChance", []string{"10"}},
+		{"Function.with:multiple:params", "Function.with", []string{"multiple", "params"}},
+		{"Regex.regex://", "Regex.regex", []string{"//"}},
+		{"Regex.regex:/[a-z0-9]{1,64}/", "Regex.regex", []string{"/[a-z0-9]{1,64}/"}},
+		{"Regex.regex:/[a-z0-9]{1,64}/:param2", "Regex.regex", []string{"/[a-z0-9]{1,64}/", "param2"}},
+	}
+
+	for _, tt := range tests {
+		funcName, params := extractMockMethod(tt.input)
+		assert.Equal(suite.T(), tt.expectedFuncName, funcName)
+		assert.Equal(suite.T(), tt.expectedParams, params)
+	}
+}
+
 func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
 	tests := []struct {
 		input          string
@@ -37,28 +59,6 @@ func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
 		value, isMock := interpretString(tt.input)
 		assert.Equal(suite.T(), tt.expectedValue, value)
 		assert.Equal(suite.T(), tt.expectedIsMock, isMock)
-	}
-}
-
-func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
-	tests := []struct {
-		input            string
-		expectedFuncName string
-		expectedParams   []string
-	}{
-		{"", "", nil},
-		{"Address.city", "Address.city", []string{}},
-		{"Boolean.booleanWithChance:10", "Boolean.booleanWithChance", []string{"10"}},
-		{"Function.with:multiple:params", "Function.with", []string{"multiple", "params"}},
-		{"Regex.regex://", "Regex.regex", []string{"//"}},
-		{"Regex.regex:/[a-z0-9]{1,64}/", "Regex.regex", []string{"/[a-z0-9]{1,64}/"}},
-		{"Regex.regex:/[a-z0-9]{1,64}/:param2", "Regex.regex", []string{"/[a-z0-9]{1,64}/", "param2"}},
-	}
-
-	for _, tt := range tests {
-		funcName, params := extractMockMethod(tt.input)
-		assert.Equal(suite.T(), tt.expectedFuncName, funcName)
-		assert.Equal(suite.T(), tt.expectedParams, params)
 	}
 }
 
@@ -87,6 +87,12 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 			},
 		},
 		{
+			testName: "string value asking for two results",
+			input: map[string]interface{}{
+				"key[2]": "{{ Address.city }}",
+			},
+		},
+		{
 			testName: "nested map",
 			input: map[string]interface{}{
 				"level": map[string]interface{}{
@@ -100,6 +106,14 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 				"level": map[string]interface{}{
 					"key":  "{{ Address.city }}",
 					"key2": "{{ Address.state }}",
+				},
+			},
+		},
+		{
+			testName: "nested map asking for two objects",
+			input: map[string]interface{}{
+				"level[2]": map[string]interface{}{
+					"key": "{{ Address.city }}",
 				},
 			},
 		},
@@ -207,5 +221,68 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
 		mockObj := mock.New()
 		err := processJsonMap(tt.input, mockObj)
 		assert.Error(suite.T(), err)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
+	tests := []struct {
+		input         string
+		expectedDigit int
+	}{
+		{"", 1},
+		{"text", 1},
+		{"text[10]", 10},
+	}
+
+	for _, tt := range tests {
+		digit, err := extractDigitInBrackets(tt.input)
+		assert.Equal(suite.T(), tt.expectedDigit, digit)
+		assert.NoError(suite.T(), err)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
+	tests := []struct {
+		input         string
+		expectedDigit int
+	}{
+		{"[5]text", 0},
+		{"te[5]xt", 0},
+		{"text10]", 0},
+		{"text[]", 0},
+		{"text[something]", 0},
+		{"text[1a9]", 0},
+		{"text[a1]", 0},
+		{"text[@!]", 0},
+		{"text[10][5]", 0},
+		{"text[[5]]", 0},
+		{"text]1[", 0},
+		{"text[5 ]", 0},
+		{"text[ 10]", 0},
+	}
+
+	for _, tt := range tests {
+		digit, err := extractDigitInBrackets(tt.input)
+		assert.Equal(suite.T(), tt.expectedDigit, digit)
+		assert.Error(suite.T(), err)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
+	tests := []struct {
+		input             string
+		expectedSanitized string
+	}{
+		{"", ""},
+		{"text", "text"},
+		{"text[10]", "text"},
+		{"te[5]xt", "text"},
+		{"text10]", "text10]"},
+		{"text]1[", "text]1["},
+	}
+
+	for _, tt := range tests {
+		sanitized := sanitizeKeyWithBrackets(tt.input)
+		assert.Equal(suite.T(), tt.expectedSanitized, sanitized)
 	}
 }

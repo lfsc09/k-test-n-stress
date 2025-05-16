@@ -26,12 +26,12 @@ const (
 	GB = 1 << 30
 )
 
-var filenameNumberRegex = regexp.MustCompile(`\[(\d+)\]`)
+var filenameNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
 var mockCmd = &cobra.Command{
 	Use:   "mock",
 	Short: "Generate mock data based from an object string or from template files",
-	Long: `Generate mock data based on --parseStr or --parseFrom options.
+	Long: `Generate mock data based on --parse or --parseFrom options.
 	
 * Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
 
@@ -51,13 +51,14 @@ The mock functions:
 
 Controling the number of generated data:
 
-* Add --generate to specify the number of root objects to generate. (Only works with --parseStr)
+* Add --generate to specify the number of root objects to generate. (Only works with --parse)
 * When using --parseFrom, specify the desired number of root objects in the template file's name, between brackets. (e.g., "employees[5].template.json" will generate an array of 5 root objects)
 * For inner objects, also pass the desired number between brackets in the object's "key". (e.g. { "person[5]": { "name": "{{ Person.name }}" } } will generate an array of 5 inner objects)
 * To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.phoneNumber }}" } will generate an array of 5 phone numbers)
 
 Examples:
-  ktns mock --parseStr '{"name":"{{ Person.name }}","age":"{{ Number.number::1:100 }}"}'
+  ktns mock --parse '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
+  ktns mock --parse '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
   ktns mock --parseFrom "*.template.json"
   ktns mock --parseFrom "test/templates/*.template.json"
   ktns mock --parseFrom "test/templates" --preserveFolderStructure
@@ -90,7 +91,7 @@ Examples:
 		}
 
 		if generate > 1 && parseStr == "" {
-			log.Fatalln("The --generate option is only available when using --parseStr")
+			log.Fatalln("The --generate option is only available when using --parse")
 		}
 
 		if generate <= 0 {
@@ -108,16 +109,19 @@ Examples:
 			mpb.WithAutoRefresh(),
 		)
 
-		// Parse single string object from `--parseStr`
+		// Parse single string object from `--parse`
 		if parseStr != "" {
 			outPath := ""
-			bar := giveMeABar("CLI", &outPath, 3, mpbHandler)
+			bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
+
+			// Parse the string object content (STEP)
 			var parseMap map[string]interface{}
 			if err := json.Unmarshal([]byte(parseStr), &parseMap); err != nil {
 				log.Fatalf("Opss..failed to parse JSON from the provided --parse <string>: %v\n", err)
 			}
 			bar.Increment()
 
+			// Process the parsed map (STEP)
 			mocker := mock.New()
 			parseMaps := make([]map[string]interface{}, generate)
 			for i := range generate {
@@ -129,6 +133,13 @@ Examples:
 			}
 			bar.Increment()
 
+			// Sanitize the parsed map (STEP)
+			for i := range parseMaps {
+				sanitizeJsonMap(parseMaps[i])
+			}
+			bar.Increment()
+
+			// Write the processed map to a file (STEP)
 			var mu sync.Mutex
 			createdDirs := make(map[string]bool, 1)
 			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMaps, &mu, &createdDirs); err != nil {
@@ -155,7 +166,7 @@ Examples:
 				go func(inPath string) {
 					defer wg.Done()
 					outPath := ""
-					bar := giveMeABar(inPath, &outPath, 4, mpbHandler)
+					bar := giveMeABar(inPath, &outPath, 5, mpbHandler)
 
 					// Read the template file (STEP)
 					templateFileContent, err := os.ReadFile(inPath)
@@ -164,7 +175,7 @@ Examples:
 						bar.Abort(false)
 						return
 					}
-					generate, err := extractDigitFromFilename(inPath)
+					generate, err := extractDigitInBrackets(inPath)
 					if err != nil {
 						log.Printf("Opss..failed to extract digit from filename: %v\n", err)
 						bar.Abort(false)
@@ -195,6 +206,12 @@ Examples:
 					}
 					bar.Increment()
 
+					// Sanitize the parsed map (STEP)
+					for i := range parseMaps {
+						sanitizeJsonMap(parseMaps[i])
+					}
+					bar.Increment()
+
 					// Write the processed map to a file (STEP)
 					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMaps, &mu, &createdDirs); err != nil {
 						log.Println(err)
@@ -216,7 +233,7 @@ func init() {
 	mockCmd.Flags().String("parse", "", "pass a JSON object as a string. The mock data will be generated based on this provided template object")
 	mockCmd.Flags().String("parseFrom", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found files")
 	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parseFrom)")
-	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parseStr)")
+	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse)")
 
 	viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
 	viper.BindPFlag("parse", mockCmd.Flags().Lookup("parse"))
@@ -289,24 +306,66 @@ func interpretString(rawValue string) (string, bool) {
 // It handles nested maps and arrays of strings or maps.
 // Returns an error if any value is not a string or map.
 func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
-	for objKey, objValue := range parseMap {
-		switch typedValue := objValue.(type) {
+	objKeys := make([]string, 0, len(parseMap))
+	for key := range parseMap {
+		objKeys = append(objKeys, key)
+	}
+
+	for keyIndex := 0; keyIndex < len(objKeys); {
+		objKey := objKeys[keyIndex]
+		switch typedValue := parseMap[objKey].(type) {
 		case string:
+			// try to find [digit] in the "key"
+			generateAmount, err := extractDigitInBrackets(objKey)
+			if err != nil {
+				return err
+			}
+			// try to find the mock function in the "value"
 			interpretedValue, isMockFunction := interpretString(typedValue)
+			// if it's not a mock function, just replace the value
 			if !isMockFunction {
 				parseMap[objKey] = interpretedValue
+				keyIndex++
 				continue
 			}
+			// if it's a mock function, extract the function name and parameters
 			functionName, params := extractMockMethod(interpretedValue)
-			mockValue, err := mocker.Generate(functionName, params)
+			// either generate array of values, otherwise only one value
+			if generateAmount > 1 {
+				parseMap[objKey] = make([]string, generateAmount)
+				for i := range generateAmount {
+					mockValue, err := mocker.Generate(functionName, params)
+					if err != nil {
+						return err
+					}
+					parseMap[objKey].([]string)[i] = mockValue
+				}
+			} else {
+				mockValue, err := mocker.Generate(functionName, params)
+				if err != nil {
+					return err
+				}
+				parseMap[objKey] = mockValue
+			}
+			keyIndex++
+		case map[string]interface{}:
+			// try to find [digit] in the "key"
+			generateAmount, err := extractDigitInBrackets(objKey)
 			if err != nil {
 				return err
 			}
-			parseMap[objKey] = mockValue
-		case map[string]interface{}:
-			err := processJsonMap(typedValue, mocker)
-			if err != nil {
-				return err
+			// if generating multiple values, convert the map to a slice of maps (but force the type to generic interface{}) and reprocess again
+			if generateAmount > 1 {
+				convertedValue := make([]interface{}, generateAmount)
+				for i := range generateAmount {
+					convertedValue[i] = deepcopy.Copy(typedValue).(interface{})
+				}
+				parseMap[objKey] = convertedValue
+			} else {
+				if err := processJsonMap(typedValue, mocker); err != nil {
+					return err
+				}
+				keyIndex++
 			}
 		case []interface{}:
 			for itemKey, item := range typedValue {
@@ -331,11 +390,72 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 					return fmt.Errorf("Value '%v' is not a string or map", item)
 				}
 			}
+			keyIndex++
 		default:
-			return fmt.Errorf("Value '%v' is not a string or map", typedValue)
+			return fmt.Errorf("Value '%v' is not a string, map or array", typedValue)
 		}
 	}
 	return nil
+}
+
+// Iterates through the parsed json map and sanitizes the keys by removing segments between bracketes (e.g. [digits]).
+// It handles nested maps.
+func sanitizeJsonMap(parseMap map[string]interface{}) {
+	// Clone keys to avoid modifying map during iteration
+	objKeys := make([]string, 0, len(parseMap))
+	for objKey := range parseMap {
+		objKeys = append(objKeys, objKey)
+	}
+
+	for _, objKey := range objKeys {
+		objValue := parseMap[objKey]
+		sanitizedKey := sanitizeKeyWithBrackets(objKey)
+
+		// Recurse on nested maps
+		if mapValue, ok := objValue.(map[string]interface{}); ok {
+			sanitizeJsonMap(mapValue)
+		}
+
+		if sanitizedKey != objKey {
+			parseMap[sanitizedKey] = objValue
+			delete(parseMap, objKey)
+		}
+	}
+}
+
+// Extracts a digit from a string in the format "content[<digit>]".
+// If the string doesn't contain brackets, it returns 1.
+func extractDigitInBrackets(str string) (int, error) {
+	matches := filenameNumberRegex.FindStringSubmatch(str)
+
+	if len(matches) != 2 {
+		if !regexp.MustCompile(`[\[\]]`).MatchString(str) {
+			return 1, nil
+		}
+		return 0, fmt.Errorf("Invalid format: must be 'text[digit]', got: '%s'", str)
+	}
+
+	digit, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, fmt.Errorf("Invalid content inside brackets in: '%s'", str)
+	}
+
+	return digit, nil
+}
+
+// Removes the segment of a string between brackets, including the brackets themselves.
+// It returns the cleaned string.
+func sanitizeKeyWithBrackets(str string) string {
+	startBracket := strings.Index(str, "[")
+	endBracket := strings.Index(str, "]")
+
+	if startBracket != -1 && endBracket != -1 && endBracket > startBracket {
+		segment := str[startBracket : endBracket+1]
+		// Remove the segment from the original string
+		strCleaned := strings.Replace(str, segment, "", 1)
+		return strCleaned
+	}
+	return str
 }
 
 // Returns all *.template.json files from a path, directory, or glob.
@@ -444,24 +564,6 @@ func normalizeParseFrom(input string) (string, error) {
 	return base, nil
 }
 
-// Extracts a digit from a string in the format "strintcontent[<digit>]morecontentoptionally".
-// It returns the digit and an error if the format is invalid.
-func extractDigitFromFilename(str string) (int, error) {
-	if strings.Contains(str, "[") && strings.Contains(str, "]") {
-		matches := filenameNumberRegex.FindStringSubmatch(str)
-		// Check strict pattern: only digits inside brackets
-		if len(matches) < 2 {
-			return 0, fmt.Errorf("Don't use empty brackets [] in '%s'", str)
-		}
-		digit, err := strconv.Atoi(matches[1])
-		if err != nil {
-			return 0, fmt.Errorf("Invalid content inside brackets [] in: '%s'", str)
-		}
-		return digit, nil
-	}
-	return 1, nil
-}
-
 func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar {
 	startElapsedTime := time.Now()
 	var elapsedTime time.Duration
@@ -472,12 +574,14 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 				current := "unknown state"
 				if s.Aborted {
 					current = "failed"
-				} else if s.Current == steps-4 {
+				} else if s.Current == steps-5 {
 					current = "reading"
-				} else if s.Current == steps-3 {
+				} else if s.Current == steps-4 {
 					current = "parsing"
-				} else if s.Current == steps-2 {
+				} else if s.Current == steps-3 {
 					current = "processing"
+				} else if s.Current == steps-2 {
+					current = "sanetizing"
 				} else if s.Current == steps-1 {
 					current = "writing"
 				} else if s.Completed {
