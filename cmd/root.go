@@ -5,6 +5,12 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	KB = 1 << 10
+	MB = 1 << 20
+	GB = 1 << 30
+)
+
 var execFile string
 var rootCmd = &cobra.Command{
 	Use:   "ktns",

@@ -20,12 +20,6 @@ import (
 	"github.com/vbauerster/mpb/v8/decor"
 )
 
-const (
-	KB = 1 << 10
-	MB = 1 << 20
-	GB = 1 << 30
-)
-
 var filenameNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]\.template\.json$`)
 var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
