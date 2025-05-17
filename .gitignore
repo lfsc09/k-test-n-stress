@@ -30,5 +30,7 @@ go.work.sum
 
 # any folders that are not source code
 */
+!/.github/
+!/.github/**
 !/cmd
 !/mock
