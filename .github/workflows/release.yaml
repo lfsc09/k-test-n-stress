@@ -23,9 +23,9 @@ jobs:
         run: |
           mkdir dist
           # Linux Binary
-          GOOS=linux GOARCH=amd64 go build -o dist/ktns-linux-amd64 ./cmd/ktns
+          GOOS=linux GOARCH=amd64 go build -o dist/ktns-linux-amd64
           # Windows Binary
-          GOOS=windows GOARCH=amd64 go build -o dist/ktns-windows-amd64.exe ./cmd/ktns
+          GOOS=windows GOARCH=amd64 go build -o dist/ktns-windows-amd64.exe
 
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v1
