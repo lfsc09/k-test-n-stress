@@ -1,0 +1,37 @@
+name: Build & Upload on Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload assets to the release
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.1'
+
+      - name: Build binaries
+        run: |
+          mkdir dist
+          # Linux Binary
+          GOOS=linux GOARCH=amd64 go build -o dist/ktns-linux-amd64
+          # Windows Binary
+          GOOS=windows GOARCH=amd64 go build -o dist/ktns-windows-amd64.exe
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/ktns-linux-amd64
+            dist/ktns-windows-amd64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

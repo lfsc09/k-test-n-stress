@@ -40,22 +40,22 @@ Mock function must be wrapped in `{{ Person.name }}`, or values passed will be i
 ### Flags
 
 - `--list`: If set, it will list all available mock functions.
-- `--parse`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
-- `--parseFrom`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
+- `--parseJson`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
+- `--parseFiles`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
 - `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
-- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse`). (More info [here](#generating-multiple-values))
+- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parseJson`). (More info [here](#generating-multiple-values))
 
 </br>
 
 ### Examples
 
-#### Example (`--parse`)
+#### Example (`--parseJson`)
 
 ```bash
-ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
+ktns mock --parseJson '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
 ```
 
-#### Example (`--parseFrom`)
+#### Example (`--parseFiles`)
 
 ```json
 {
@@ -68,10 +68,10 @@ ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ 
 ```
 
 ```bash
-  ktns mock --parseFrom example.template.json
-  ktns mock --parseFrom "*.template.json"
-  ktns mock --parseFrom "test/templates/*.template.json"
-  ktns mock --parseFrom "test/templates" --preserveFolderStructure
+  ktns mock --parseFiles example.template.json
+  ktns mock --parseFiles "*.template.json"
+  ktns mock --parseFiles "test/templates/*.template.json"
+  ktns mock --parseFiles "test/templates" --preserveFolderStructure
 ```
 
 </br>
@@ -119,13 +119,13 @@ ktns mock --list
 
 ##### Root objects
 
-Generating muliple root objects can be done with the flag `--generate <number>` if using `--parse`.
+Generating muliple root objects can be done with the flag `--generate <number>` if using `--parseJson`.
 
 ```bash
-ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
+ktns mock --parseJson '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
 ```
 
-When using `--parseFrom`, specify the desired number of root objects in the template file's name, between brackets.
+When using `--parseFiles`, specify the desired number of root objects in the template file's name, between brackets.
 
 A template file named `employees[5].template.json` bellow:
 
