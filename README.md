@@ -2,9 +2,10 @@
 
 k-test-n-stress is a simple tool to facilate:
 
-1. Generation of fake data.
-2. Running http tests on endpoints.
-3. Generating stress tests on endpoints.
+1. `[mock]` Generation of fake data.
+2. `[request]` Running http tests on endpoints.
+3. `[stress]` Generating stress tests on endpoints.
+4. `[feed]` Feed (Seed) databases with fake data and `table` templates. ???
 
 Run it like:
 
@@ -22,10 +23,10 @@ ktns -f <file.yaml>
 
 ```yaml
 command: <command>
-  - <flag>
   <flag>: <flag-value>
 ```
 
+</br>
 </br>
 
 ## Faker (`mock`) command
@@ -34,26 +35,34 @@ command: <command>
 ktns mock <flags>
 ```
 
-#### Flags
+Mock function must be wrapped in `{{ Person.name }}`, or values passed will be interpreted as raw values.
+
+### Flags
 
 - `--list`: If set, it will list all available mock functions.
-- `--parseStr`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
+- `--parse`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
 - `--parseFrom`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
 - `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
+- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse`). (More info [here](#generating-multiple-values))
 
-#### Example (`--parseStr`)
+</br>
+
+### Examples
+
+#### Example (`--parse`)
 
 ```bash
-ktns mock --parseStr '{ "company": "Company.name", "employee": { "name": "Person.fullName" }}'
+ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
 ```
 
 #### Example (`--parseFrom`)
 
 ```json
 {
-  "company": "Company.name",
+  "company": "{{ Company.name }}",
   "employee": {
-    "name": "Person.fullName"
+    "name": "{{ Person.fullName }}",
+    "age": "39"
   }
 }
 ```
@@ -65,25 +74,114 @@ ktns mock --parseStr '{ "company": "Company.name", "employee": { "name": "Person
   ktns mock --parseFrom "test/templates" --preserveFolderStructure
 ```
 
-#### The Json template object
+</br>
 
-The Json template informated have some limitations.
+### Details
 
-- The `values` of each json key may be:
-  - A `string` with the Faker function name.
-  - Another `object`, at any depth.
-  - An `array` of either `string` OR `object`. _(Matrixes not treated)_
+#### Limitations of the template objects
+
+The `value` of an object key may be:
+- A `string` value with the **Faker function name *(between double brackets)***.
+- An `object`, detailing an inner object.
+- An `array` of either `string` OR `object`.
 
 #### Mock functions optional parameters
 
-Some of the mock functions accept additional parameters, and they may be informed by delimiting with `:`.
+Some of the mock functions accept additional parameters, and they are informed by delimiting with `:`.
 
-```bash
-ktns mock --parseStr '{ "words": "Loreum.words:5" }'
+e.g.: `{{ functionName::arg1:arg2:... }}`
+
+```json
+{
+  "words": "Loreum.words:5"
+}
+```
+
+When working with multiple parameters, you may leave them blank if not used. _(They will assume default values)_
+
+```json
+// Number.number expects 3 parameters (<decimal>:<min>:<max>)
+// In this case <decimal> is left blank, and will use default values.
+{
+  "age": "Number.number::18:50"
+}
 ```
 
 #### List of mock functions
 
+Get a list of all the available Mock functions.
+
 ```bash
 ktns mock --list
+```
+
+#### Generating multiple values
+
+##### Root objects
+
+Generating muliple root objects can be done with the flag `--generate <number>` if using `--parse`.
+
+```bash
+ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
+```
+
+When using `--parseFrom`, specify the desired number of root objects in the template file's name, between brackets.
+
+A template file named `employees[5].template.json` bellow:
+
+```json
+{
+  "name": "{{ Person.name }}"
+}
+```
+
+Will produce a `employees[5].json` of results like:
+
+```json
+[
+  {
+    "name": "..."
+  },
+  {
+    "name": "..."
+  },
+  {
+    "name": "..."
+  },
+  {
+    "name": "..."
+  },
+  {
+    "name": "..."
+  },
+]
+```
+
+##### Inner objects
+
+For inner objects, also pass the desired number between brackets in the object's `key`.
+
+```json
+{
+  "phones[3]": "{{ Person.phoneNumber }}",  // Will generate an array of 3 values
+  "employees[2]": {                         // Will generate an array of employees with 5 objects
+    "name": "{{ Person.name }}"
+  }
+}
+```
+
+Will produce:
+
+```json
+{
+  "phones": ["...", "...", "..."],
+  "employees": [
+    {
+      "name": "..."
+    },
+    {
+      "name": "..."
+    }
+  ]
+}
 ```
