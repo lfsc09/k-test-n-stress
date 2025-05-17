@@ -226,16 +226,19 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
 
 func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
 	tests := []struct {
-		input         string
+		inputPlace    string
+		inputValue    string
 		expectedDigit int
 	}{
-		{"", 1},
-		{"text", 1},
-		{"text[10]", 10},
+		{"object", "", 1},
+		{"object", "text", 1},
+		{"object", "text[10]", 10},
+		{"file", "text.template.json", 1},
+		{"file", "text[10].template.json", 10},
 	}
 
 	for _, tt := range tests {
-		digit, err := extractDigitInBrackets(tt.input)
+		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
 		assert.Equal(suite.T(), tt.expectedDigit, digit)
 		assert.NoError(suite.T(), err)
 	}
@@ -243,26 +246,36 @@ func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
 
 func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
 	tests := []struct {
-		input         string
+		inputPlace    string
+		inputValue    string
 		expectedDigit int
 	}{
-		{"[5]text", 0},
-		{"te[5]xt", 0},
-		{"text10]", 0},
-		{"text[]", 0},
-		{"text[something]", 0},
-		{"text[1a9]", 0},
-		{"text[a1]", 0},
-		{"text[@!]", 0},
-		{"text[10][5]", 0},
-		{"text[[5]]", 0},
-		{"text]1[", 0},
-		{"text[5 ]", 0},
-		{"text[ 10]", 0},
+		{"other", "text[0]", 0},
+		{"object", "text[-2]", 0},
+		{"object", "text[0]", 0},
+		{"object", "[5]text", 0},
+		{"object", "te[5]xt", 0},
+		{"object", "text10]", 0},
+		{"object", "text[]", 0},
+		{"object", "text[something]", 0},
+		{"object", "text[1a9]", 0},
+		{"object", "text[a1]", 0},
+		{"object", "text[@!]", 0},
+		{"object", "text[10][5]", 0},
+		{"object", "text[[5]]", 0},
+		{"object", "text]1[", 0},
+		{"object", "text[5 ]", 0},
+		{"object", "text[ 10]", 0},
+		{"file", "text[5]", 0},
+		{"file", "text[5].temp", 0},
+		{"file", "text[5].json", 0},
+		{"file", "[5].template.json", 0},
+		{"file", "text[5 ].template.json", 0},
+		{"file", "text [5].template.json", 0},
 	}
 
 	for _, tt := range tests {
-		digit, err := extractDigitInBrackets(tt.input)
+		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
 		assert.Equal(suite.T(), tt.expectedDigit, digit)
 		assert.Error(suite.T(), err)
 	}
@@ -276,6 +289,7 @@ func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 		{"", ""},
 		{"text", "text"},
 		{"text[10]", "text"},
+		{"text[10].template.json", "text.template.json"},
 		{"te[5]xt", "text"},
 		{"text10]", "text10]"},
 		{"text]1[", "text]1["},

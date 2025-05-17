@@ -26,7 +26,8 @@ const (
 	GB = 1 << 30
 )
 
-var filenameNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
+var filenameNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]\.template\.json$`)
+var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
 var mockCmd = &cobra.Command{
 	Use:   "mock",
@@ -175,7 +176,7 @@ Examples:
 						bar.Abort(false)
 						return
 					}
-					generate, err := extractDigitInBrackets(inPath)
+					generate, err := extractDigitInBrackets("file", inPath)
 					if err != nil {
 						log.Printf("Opss..failed to extract digit from filename: %v\n", err)
 						bar.Abort(false)
@@ -316,7 +317,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 		switch typedValue := parseMap[objKey].(type) {
 		case string:
 			// try to find [digit] in the "key"
-			generateAmount, err := extractDigitInBrackets(objKey)
+			generateAmount, err := extractDigitInBrackets("object", objKey)
 			if err != nil {
 				return err
 			}
@@ -350,7 +351,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 			keyIndex++
 		case map[string]interface{}:
 			// try to find [digit] in the "key"
-			generateAmount, err := extractDigitInBrackets(objKey)
+			generateAmount, err := extractDigitInBrackets("object", objKey)
 			if err != nil {
 				return err
 			}
@@ -423,21 +424,36 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 	}
 }
 
-// Extracts a digit from a string in the format "content[<digit>]".
+// Extracts a digit from a string in the format "content[<digit>]" or "content[<digit>].template.json".
 // If the string doesn't contain brackets, it returns 1.
-func extractDigitInBrackets(str string) (int, error) {
-	matches := filenameNumberRegex.FindStringSubmatch(str)
+func extractDigitInBrackets(place string, str string) (int, error) {
+	var matches []string
+	if place == "file" {
+		matches = filenameNumberRegex.FindStringSubmatch(str)
+	} else if place == "object" {
+		matches = objKeyNumberRegex.FindStringSubmatch(str)
+	} else {
+		return 0, fmt.Errorf("Invalid place value: '%s' (either 'file' or 'object')", place)
+	}
 
 	if len(matches) != 2 {
 		if !regexp.MustCompile(`[\[\]]`).MatchString(str) {
 			return 1, nil
 		}
-		return 0, fmt.Errorf("Invalid format: must be 'text[digit]', got: '%s'", str)
+		if place == "file" {
+			return 0, fmt.Errorf("Invalid format: must be 'text[digit].template.json', got: '%s'", str)
+		} else if place == "object" {
+			return 0, fmt.Errorf("Invalid format: must be 'text[digit]', got: '%s'", str)
+		}
 	}
 
 	digit, err := strconv.Atoi(matches[1])
 	if err != nil {
 		return 0, fmt.Errorf("Invalid content inside brackets in: '%s'", str)
+	}
+
+	if digit <= 0 {
+		return 0, fmt.Errorf("Invalid digit in brackets: '%s'", str)
 	}
 
 	return digit, nil
