@@ -26,7 +26,7 @@ var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 var mockCmd = &cobra.Command{
 	Use:   "mock",
 	Short: "Generate mock data based from an object string or from template files",
-	Long: `Generate mock data based on --parseJson or --parseFiles options.
+	Long: `Generate mock data based on --parseStr, --parseJson or --parseFiles options.
 	
 * Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFiles)
 
@@ -52,6 +52,8 @@ Controling the number of generated data:
 * To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.phoneNumber }}" } will generate an array of 5 phone numbers)
 
 Examples:
+	ktns mock --parseStr '{{ Person.name }}'
+	ktns mock --parseStr 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old'
   ktns mock --parseJson '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
   ktns mock --parseJson '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
   ktns mock --parseFiles "*.template.json"
@@ -62,6 +64,7 @@ Examples:
 		list := viper.GetBool("list")
 		parseJson := viper.GetString("parseJson")
 		parseFiles := viper.GetString("parseFiles")
+		parseStr := viper.GetString("parseStr")
 		preserveFolderStructure := viper.GetBool("preserveFolderStructure")
 		generate := viper.GetInt("generate")
 
@@ -71,21 +74,37 @@ Examples:
 			return
 		}
 
-		if parseJson == "" && parseFiles == "" {
+		runningParseStr, runningParseJson, runningParseFiles := false, false, false
+
+		// Check if --parseJson, --parseFiles or --parseStr is provided
+		parseCheck := 0
+		if parseStr != "" {
+			parseCheck++
+			runningParseStr = true
+		}
+		if parseJson != "" {
+			parseCheck++
+			runningParseJson = true
+		}
+		if parseFiles != "" {
+			parseCheck++
+			runningParseFiles = true
+		}
+		if parseCheck == 0 {
 			log.Fatalln("Nothing to be parsed. Ask for help -h or --help")
-		} else if parseJson != "" && parseFiles != "" {
-			log.Fatalln("Please provide only one of the two options: --parseJson or --parseFiles")
+		} else if parseCheck > 1 {
+			log.Fatalln("Please provide only one of the three options: --parseJson, --parseFiles or --parseStr")
 		}
 
-		if parseFiles != "" && len(args) > 0 {
+		if runningParseFiles && len(args) > 0 {
 			log.Fatalln("You passed multiple files to --parseFiles without quotes. Did you mean: --parseFiles \"*.template.json\"?")
 		}
 
-		if preserveFolderStructure && parseFiles == "" {
+		if preserveFolderStructure && !runningParseFiles {
 			log.Fatalln("The --preserveFolderStructure option is only available when using --parseFiles")
 		}
 
-		if generate > 1 && parseJson == "" {
+		if generate > 1 && !runningParseJson {
 			log.Fatalln("The --generate option is only available when using --parseJson")
 		}
 
@@ -104,8 +123,17 @@ Examples:
 			mpb.WithAutoRefresh(),
 		)
 
-		// Parse single string object from `--parseJson`
-		if parseJson != "" {
+		if runningParseStr {
+			// Process the string
+			mocker := mock.New()
+			mockedStr := processStr(parseStr, mocker)
+
+			// Print the mocked string to STDOUT
+			fmt.Printf("%s\n", mockedStr)
+		}
+
+		// Parse string json object from `--parseJson`
+		if runningParseJson {
 			outPath := ""
 			bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
 
@@ -144,7 +172,7 @@ Examples:
 		}
 
 		// Parse object from `--parseFiles` files
-		if parseFiles != "" {
+		if runningParseFiles {
 			foundTemplateFiles, err := findTemplateFiles(parseFiles)
 			if err != nil {
 				log.Fatalf("Failed to find template files from the provided --parseFiles %v\n", err)
@@ -225,12 +253,14 @@ Examples:
 
 func init() {
 	mockCmd.Flags().Bool("list", false, "list all available mock functions")
-	mockCmd.Flags().String("parseJson", "", "pass a JSON object as a string. The mock data will be generated based on this provided template object")
-	mockCmd.Flags().String("parseFiles", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found files")
+	mockCmd.Flags().String("parseStr", "", "pass a string to be parsed. The mock data will be generated based on this provided string")
+	mockCmd.Flags().String("parseJson", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
+	mockCmd.Flags().String("parseFiles", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found template files")
 	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parseFiles)")
 	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parseJson)")
 
 	viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
+	viper.BindPFlag("parseStr", mockCmd.Flags().Lookup("parseStr"))
 	viper.BindPFlag("parseJson", mockCmd.Flags().Lookup("parseJson"))
 	viper.BindPFlag("parseFiles", mockCmd.Flags().Lookup("parseFiles"))
 	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
@@ -416,6 +446,28 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 			delete(parseMap, objKey)
 		}
 	}
+}
+
+// Process a simple string value, checking if it contains a mock function.
+// If it does, it generates the mock value using the mocker.
+// If not, it returns the original string.
+func processStr(parseStr string, mocker *mock.Mock) string {
+	dBracketsPatterns := regexp.MustCompile(`{{\s*([^}]+?)\s*}}`)
+
+	all := dBracketsPatterns.ReplaceAllStringFunc(parseStr, func(match string) string {
+		interpretedValue := dBracketsPatterns.FindStringSubmatch(match)[1]
+		interpretedValue = strings.TrimSpace(interpretedValue)
+
+		functionName, params := extractMockMethod(interpretedValue)
+
+		mockValue, err := mocker.Generate(functionName, params)
+		if err != nil {
+			return fmt.Sprintf("[%v]", err)
+		}
+		return mockValue
+	})
+
+	return all
 }
 
 // Extracts a digit from a string in the format "content[<digit>]" or "content[<digit>].template.json".

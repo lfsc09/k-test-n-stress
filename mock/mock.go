@@ -374,7 +374,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "UserAgent.userAgent":
 		return m.faker.UserAgent().UserAgent(), nil
 	default:
-		return "", fmt.Errorf("Unknown mock function: %v\n", mockFunction)
+		return "", fmt.Errorf("Unknown mock function: %v", mockFunction)
 	}
 }
 

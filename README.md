@@ -40,6 +40,7 @@ Mock function must be wrapped in `{{ Person.name }}`, or values passed will be i
 ### Flags
 
 - `--list`: If set, it will list all available mock functions.
+- `--parseStr`: Pass a string to be parsed. The mock data will be generated based on the provided string.
 - `--parseJson`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
 - `--parseFiles`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
 - `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
@@ -48,6 +49,12 @@ Mock function must be wrapped in `{{ Person.name }}`, or values passed will be i
 </br>
 
 ### Examples
+
+#### Example (`--parseStr`)
+
+```bash
+ktns mock --parseStr 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old.'
+```
 
 #### Example (`--parseJson`)
 
