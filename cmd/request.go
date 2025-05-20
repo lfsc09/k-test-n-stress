@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -31,7 +31,7 @@ var requestCmd = &cobra.Command{
 		withMetrics := viper.GetBool("withMetrics")
 		onlyResponseBody := viper.GetBool("onlyResponseBody")
 
-		mocker := mock.New()
+		mocker := mocker.New()
 
 		// Validate flags
 		if urlStr == "" {
@@ -131,8 +131,8 @@ var requestCmd = &cobra.Command{
 			fmt.Printf("Status: %s\n", resp.Status)
 			if withMetrics {
 				fmt.Printf("Metrics:\n")
-				fmt.Printf("  Duration: %s\n", formatDurationMetrics(duration))
-				fmt.Printf("  Size: %s\n", formatSizeMetrics(int64(len(respBody))))
+				fmt.Printf("  Duration:%s\n", formatDurationMetrics(duration))
+				fmt.Printf("  Size:%s\n", formatSizeMetrics(int64(len(respBody))))
 			}
 			fmt.Printf("URL: %s\n", req.URL.String())
 			fmt.Println("Headers:")
@@ -167,28 +167,4 @@ func init() {
 	viper.BindPFlag("onlyResponseBody", requestCmd.Flags().Lookup("onlyResponseBody"))
 
 	rootCmd.AddCommand(requestCmd)
-}
-
-func formatDurationMetrics(duration time.Duration) string {
-	switch {
-	case duration < time.Millisecond:
-		return fmt.Sprintf("[%.2fµs]", float64(duration.Microseconds()))
-	case duration < time.Second:
-		return fmt.Sprintf("[%.2fms]", float64(duration.Milliseconds()))
-	default:
-		return fmt.Sprintf("[%.2fs]", duration.Seconds())
-	}
-}
-
-func formatSizeMetrics(size int64) string {
-	switch {
-	case size >= GB:
-		return fmt.Sprintf("[%.2f GB]", float64(size)/float64(GB))
-	case size >= MB:
-		return fmt.Sprintf("[%.2f MB]", float64(size)/float64(MB))
-	case size >= KB:
-		return fmt.Sprintf("[%.2f KB]", float64(size)/float64(MB))
-	default:
-		return fmt.Sprintf("[%d Bytes]", size)
-	}
 }

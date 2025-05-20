@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/mohae/deepcopy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -69,7 +69,7 @@ Examples:
 		generate := viper.GetInt("generate")
 
 		if list {
-			mocker := mock.New()
+			mocker := mocker.New()
 			mocker.List()
 			return
 		}
@@ -125,7 +125,7 @@ Examples:
 
 		if runningParseStr {
 			// Process the string
-			mocker := mock.New()
+			mocker := mocker.New()
 			mockedStr := processStr(parseStr, mocker)
 
 			// Print the mocked string to STDOUT
@@ -145,7 +145,7 @@ Examples:
 			bar.Increment()
 
 			// Process the parsed map (STEP)
-			mocker := mock.New()
+			mocker := mocker.New()
 			parseMaps := make([]map[string]interface{}, generate)
 			for i := range generate {
 				cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
@@ -216,7 +216,7 @@ Examples:
 					bar.Increment()
 
 					// Process the parsed map (STEP)
-					mocker := mock.New()
+					mocker := mocker.New()
 					parseMaps := make([]map[string]interface{}, generate)
 					for i := range generate {
 						cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
@@ -330,7 +330,7 @@ func interpretString(rawValue string) (string, bool) {
 // It replaces string values with generated mock data based on the function name and parameters.
 // It handles nested maps and arrays of strings or maps.
 // Returns an error if any value is not a string or map.
-func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
+func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error {
 	objKeys := make([]string, 0, len(parseMap))
 	for key := range parseMap {
 		objKeys = append(objKeys, key)
@@ -451,7 +451,7 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 // Process a simple string value, checking if it contains a mock function.
 // If it does, it generates the mock value using the mocker.
 // If not, it returns the original string.
-func processStr(parseStr string, mocker *mock.Mock) string {
+func processStr(parseStr string, mocker *mocker.Mock) string {
 	dBracketsPatterns := regexp.MustCompile(`{{\s*([^}]+?)\s*}}`)
 
 	all := dBracketsPatterns.ReplaceAllStringFunc(parseStr, func(match string) string {
@@ -658,29 +658,14 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 				if !s.Completed {
 					elapsedTime = time.Since(startElapsedTime)
 				}
-				switch {
-				case elapsedTime < time.Millisecond:
-					return fmt.Sprintf(" [%.2fµs] ", float64(elapsedTime.Microseconds()))
-				case elapsedTime < time.Second:
-					return fmt.Sprintf(" [%.2fms] ", float64(elapsedTime.Milliseconds()))
-				default:
-					return fmt.Sprintf(" [%.2fs] ", elapsedTime.Seconds())
-				}
+				return formatDurationMetrics(elapsedTime)
 			}, decor.WCSyncWidth),
 			decor.Any(func(s decor.Statistics) string {
 				info, err := os.Stat(*outPath)
 				if err != nil {
 					return " [N/A] "
 				}
-				fileSize := info.Size()
-				switch {
-				case fileSize >= GB:
-					return fmt.Sprintf(" [%.2fGB] ", float64(fileSize)/float64(GB))
-				case fileSize >= MB:
-					return fmt.Sprintf(" [%.2fMB] ", float64(fileSize)/float64(MB))
-				default:
-					return fmt.Sprintf(" [%.2fKB] ", float64(fileSize)/float64(KB))
-				}
+				return formatSizeMetrics(info.Size())
 			}, decor.WCSyncWidth),
 		),
 	)

@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -192,8 +192,8 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 	}
 
 	for _, tt := range tests {
-		mockObj := mock.New()
-		err := processJsonMap(tt.input, mockObj)
+		mockerObj := mocker.New()
+		err := processJsonMap(tt.input, mockerObj)
 		assert.NoError(suite.T(), err)
 	}
 }
@@ -218,8 +218,8 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
 	}
 
 	for _, tt := range tests {
-		mockObj := mock.New()
-		err := processJsonMap(tt.input, mockObj)
+		mockerObj := mocker.New()
+		err := processJsonMap(tt.input, mockerObj)
 		assert.Error(suite.T(), err)
 	}
 }

@@ -1,4 +1,4 @@
-package mock
+package mocker
 
 import (
 	"fmt"
@@ -12,18 +12,18 @@ import (
 
 type Mocker interface {
 	List()
-	Generate(mockKey string, mockValues interface{}) interface{}
+	Generate(mockFunction string, functionParams []string) (string, error)
 }
 
 type Mock struct {
-	faker *faker.Faker
+	jaswdrFaker *faker.Faker
 }
 
 func New() *Mock {
-	faker := faker.New()
+	jaswdrFaker := faker.New()
 
 	return &Mock{
-		faker: &faker,
+		jaswdrFaker: &jaswdrFaker,
 	}
 }
 
@@ -134,54 +134,54 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		ADDRESSES
 	*/
 	case "Address.latitude":
-		return strconv.FormatFloat(m.faker.Address().Latitude(), 'f', 6, 64), nil
+		return strconv.FormatFloat(m.jaswdrFaker.Address().Latitude(), 'f', 6, 64), nil
 	case "Address.longitude":
-		return strconv.FormatFloat(m.faker.Address().Longitude(), 'f', 6, 64), nil
+		return strconv.FormatFloat(m.jaswdrFaker.Address().Longitude(), 'f', 6, 64), nil
 	case "Address.postCode":
-		return m.faker.Address().PostCode(), nil
+		return m.jaswdrFaker.Address().PostCode(), nil
 	case "Address.country":
-		return m.faker.Address().Country(), nil
+		return m.jaswdrFaker.Address().Country(), nil
 	case "Address.state":
-		return m.faker.Address().State(), nil
+		return m.jaswdrFaker.Address().State(), nil
 	case "Address.city":
-		return m.faker.Address().City(), nil
+		return m.jaswdrFaker.Address().City(), nil
 	case "Address.streetName":
-		return m.faker.Address().StreetName(), nil
+		return m.jaswdrFaker.Address().StreetName(), nil
 	case "Address.buildingNumber":
-		return m.faker.Address().BuildingNumber(), nil
+		return m.jaswdrFaker.Address().BuildingNumber(), nil
 	/*
 		BOOLEANS
 	*/
 	case "Boolean.boolean":
-		return strconv.FormatBool(m.faker.Boolean().Bool()), nil
+		return strconv.FormatBool(m.jaswdrFaker.Boolean().Bool()), nil
 	case "Boolean.booleanWithChance":
 		chance, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strconv.FormatBool(m.faker.Boolean().Bool()), nil
+			return strconv.FormatBool(m.jaswdrFaker.Boolean().Bool()), nil
 		}
-		return strconv.FormatBool(m.faker.Boolean().BoolWithChance(chance)), nil
+		return strconv.FormatBool(m.jaswdrFaker.Boolean().BoolWithChance(chance)), nil
 	/*
 		CAR
 	*/
 	case "Car.maker":
-		return m.faker.Car().Maker(), nil
+		return m.jaswdrFaker.Car().Maker(), nil
 	case "Car.model":
-		return m.faker.Car().Model(), nil
+		return m.jaswdrFaker.Car().Model(), nil
 	case "Car.plate":
-		return m.faker.Car().Plate(), nil
+		return m.jaswdrFaker.Car().Plate(), nil
 	/*
 		COMPANY
 	*/
 	case "Company.name":
-		return m.faker.Company().Name(), nil
+		return m.jaswdrFaker.Company().Name(), nil
 	case "Company.suffix":
-		return m.faker.Company().Suffix(), nil
+		return m.jaswdrFaker.Company().Suffix(), nil
 	case "Company.catchPhrase":
-		return m.faker.Company().CatchPhrase(), nil
+		return m.jaswdrFaker.Company().CatchPhrase(), nil
 	case "Company.bs":
-		return m.faker.Company().BS(), nil
+		return m.jaswdrFaker.Company().BS(), nil
 	case "Company.jobTitle":
-		return m.faker.Company().JobTitle(), nil
+		return m.jaswdrFaker.Company().JobTitle(), nil
 	case "Company.cnpj":
 		cnpj := make([]int, 12)
 
@@ -210,70 +210,70 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		CURRENCY
 	*/
 	case "Currency.currencyCode":
-		return m.faker.Currency().Code(), nil
+		return m.jaswdrFaker.Currency().Code(), nil
 	case "Currency.currencyContry":
-		return m.faker.Currency().Country(), nil
+		return m.jaswdrFaker.Currency().Country(), nil
 	case "Currency.currencyName":
-		return m.faker.Currency().Currency(), nil
+		return m.jaswdrFaker.Currency().Currency(), nil
 	case "Currency.currencyNumber":
-		return strconv.Itoa(m.faker.Currency().Number()), nil
+		return strconv.Itoa(m.jaswdrFaker.Currency().Number()), nil
 	/*
 		FILE
 	*/
 	case "File.filenameWithExtension":
-		return m.faker.File().FilenameWithExtension(), nil
+		return m.jaswdrFaker.File().FilenameWithExtension(), nil
 	case "File.extension":
-		return m.faker.File().Extension(), nil
+		return m.jaswdrFaker.File().Extension(), nil
 	/*
 		INTERNET
 	*/
 	case "Internet.domain":
-		return m.faker.Internet().Domain(), nil
+		return m.jaswdrFaker.Internet().Domain(), nil
 	case "Internet.email":
-		return m.faker.Internet().Email(), nil
+		return m.jaswdrFaker.Internet().Email(), nil
 	case "Internet.ipv4":
-		return m.faker.Internet().Ipv4(), nil
+		return m.jaswdrFaker.Internet().Ipv4(), nil
 	case "Internet.macAddress":
-		return m.faker.Internet().MacAddress(), nil
+		return m.jaswdrFaker.Internet().MacAddress(), nil
 	case "Internet.password":
-		return m.faker.Internet().Password(), nil
+		return m.jaswdrFaker.Internet().Password(), nil
 	case "Internet.url":
-		return m.faker.Internet().URL(), nil
+		return m.jaswdrFaker.Internet().URL(), nil
 	/*
 		LOREM
 	*/
 	case "Lorem.paragraph":
 		sentences, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return m.faker.Lorem().Paragraph(1), nil
+			return m.jaswdrFaker.Lorem().Paragraph(1), nil
 		}
-		return m.faker.Lorem().Paragraph(sentences), nil
+		return m.jaswdrFaker.Lorem().Paragraph(sentences), nil
 	case "Lorem.paragraphs":
 		paragraphs, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.faker.Lorem().Paragraphs(1), ""), nil
+			return strings.Join(m.jaswdrFaker.Lorem().Paragraphs(1), ""), nil
 		}
-		return strings.Join(m.faker.Lorem().Paragraphs(paragraphs), "\n"), nil
+		return strings.Join(m.jaswdrFaker.Lorem().Paragraphs(paragraphs), "\n"), nil
 	case "Lorem.sentence":
 		words, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return m.faker.Lorem().Sentence(1), nil
+			return m.jaswdrFaker.Lorem().Sentence(1), nil
 		}
-		return m.faker.Lorem().Sentence(words), nil
+		return m.jaswdrFaker.Lorem().Sentence(words), nil
 	case "Lorem.sentences":
 		sentences, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.faker.Lorem().Sentences(1), ""), nil
+			return strings.Join(m.jaswdrFaker.Lorem().Sentences(1), ""), nil
 		}
-		return strings.Join(m.faker.Lorem().Sentences(sentences), "\n"), nil
+		return strings.Join(m.jaswdrFaker.Lorem().Sentences(sentences), "\n"), nil
 	case "Lorem.word":
-		return m.faker.Lorem().Word(), nil
+		return m.jaswdrFaker.Lorem().Word(), nil
 	case "Lorem.words":
 		words, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.faker.Lorem().Words(1), " "), nil
+			return strings.Join(m.jaswdrFaker.Lorem().Words(1), " "), nil
 		}
-		return strings.Join(m.faker.Lorem().Words(words), ""), nil
+		return strings.Join(m.jaswdrFaker.Lorem().Words(words), ""), nil
 	/*
 		NUMBER
 	*/
@@ -290,16 +290,16 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if len(functionParams) > 2 && functionParams[2] != "" {
 			max, _ = strconv.ParseFloat(functionParams[2], 64)
 		}
-		return strconv.FormatFloat(m.faker.Float64(decimals, int(min), int(max)), 'f', decimals, 64), nil
+		return strconv.FormatFloat(m.jaswdrFaker.Float64(decimals, int(min), int(max)), 'f', decimals, 64), nil
 	/*
 		PAYMENT
 	*/
 	case "Payment.creditCardExpirationDate":
-		return m.faker.Payment().CreditCardExpirationDateString(), nil
+		return m.jaswdrFaker.Payment().CreditCardExpirationDateString(), nil
 	case "Payment.creditCardNumber":
-		return m.faker.Payment().CreditCardNumber(), nil
+		return m.jaswdrFaker.Payment().CreditCardNumber(), nil
 	case "Payment.creditCardType":
-		return m.faker.Payment().CreditCardType(), nil
+		return m.jaswdrFaker.Payment().CreditCardType(), nil
 	case "Payment.creditCardCvv":
 		cvv, err := regen.Generate("[0-9]{3}")
 		if err != nil {
@@ -310,15 +310,15 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		PERSON
 	*/
 	case "Person.phoneNumber":
-		return m.faker.Person().Contact().Phone, nil
+		return m.jaswdrFaker.Person().Contact().Phone, nil
 	case "Person.email":
-		return m.faker.Person().Contact().Email, nil
+		return m.jaswdrFaker.Person().Contact().Email, nil
 	case "Person.firstName":
-		return m.faker.Person().FirstName(), nil
+		return m.jaswdrFaker.Person().FirstName(), nil
 	case "Person.lastName":
-		return m.faker.Person().LastName(), nil
+		return m.jaswdrFaker.Person().LastName(), nil
 	case "Person.name":
-		return m.faker.Person().Name(), nil
+		return m.jaswdrFaker.Person().Name(), nil
 	case "Person.cpf":
 		cpf := make([]int, 9)
 
@@ -367,36 +367,13 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		UUID
 	*/
 	case "UUID.uuidv4":
-		return m.faker.UUID().V4(), nil
+		return m.jaswdrFaker.UUID().V4(), nil
 	/*
 		USER AGENT
 	*/
 	case "UserAgent.userAgent":
-		return m.faker.UserAgent().UserAgent(), nil
+		return m.jaswdrFaker.UserAgent().UserAgent(), nil
 	default:
 		return "", fmt.Errorf("Unknown mock function: %v", mockFunction)
 	}
-}
-
-// Helper function to calculate checksum for CPF and CNPJ
-func calculateChecksum(digits []int, multipliers []int) int {
-	sum := 0
-	for i := range digits {
-		sum += digits[i] * multipliers[i]
-	}
-	remainder := sum % 11
-	if remainder < 2 {
-		return 0
-	}
-	return 11 - remainder
-}
-
-// Extracts raw regex string from /.../ and unescapes \/ → /
-func extractRegex(value string) (string, error) {
-	if !strings.HasPrefix(value, "/") || !strings.HasSuffix(value, "/") {
-		return "", fmt.Errorf("Value '%s' must be wrapped in /.../", value)
-	}
-	trimmed := value[1 : len(value)-1]
-	unescaped := strings.ReplaceAll(trimmed, `\/`, `/`)
-	return unescaped, nil
 }
