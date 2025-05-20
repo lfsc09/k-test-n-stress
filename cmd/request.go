@@ -29,7 +29,7 @@ var requestCmd = &cobra.Command{
 		queryParams := viper.GetStringSlice("qs")
 		// responseAccessor := viper.GetString("responseAccessor")
 		withMetrics := viper.GetBool("withMetrics")
-		onlyResponse := viper.GetBool("onlyResponse")
+		onlyResponseBody := viper.GetBool("onlyResponseBody")
 
 		mocker := mock.New()
 
@@ -127,7 +127,7 @@ var requestCmd = &cobra.Command{
 			log.Fatalf("Error reading response body: %v\n", err)
 		}
 
-		if !onlyResponse {
+		if !onlyResponseBody {
 			fmt.Printf("Status: %s\n", resp.Status)
 			if withMetrics {
 				fmt.Printf("Metrics:\n")
@@ -154,7 +154,7 @@ func init() {
 	requestCmd.Flags().StringArray("qs", []string{}, "pass a string 'query string' to be used as the request query string")
 	requestCmd.Flags().String("responseAccessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
 	requestCmd.Flags().Bool("withMetrics", true, "if set, show metrics of the request")
-	requestCmd.Flags().Bool("onlyResponse", false, "if set, the command output will be only the response, nothing more")
+	requestCmd.Flags().Bool("onlyResponseBody", false, "if set, the command output will be only the response's body, nothing more")
 
 	viper.BindPFlag("method", requestCmd.Flags().Lookup("method"))
 	viper.BindPFlag("https", requestCmd.Flags().Lookup("https"))
@@ -164,7 +164,7 @@ func init() {
 	viper.BindPFlag("qs", requestCmd.Flags().Lookup("qs"))
 	viper.BindPFlag("responseAccessor", requestCmd.Flags().Lookup("responseAccessor"))
 	viper.BindPFlag("withMetrics", requestCmd.Flags().Lookup("withMetrics"))
-	viper.BindPFlag("onlyResponse", requestCmd.Flags().Lookup("onlyResponse"))
+	viper.BindPFlag("onlyResponseBody", requestCmd.Flags().Lookup("onlyResponseBody"))
 
 	rootCmd.AddCommand(requestCmd)
 }
