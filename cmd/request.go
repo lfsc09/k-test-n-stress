@@ -166,5 +166,5 @@ func init() {
 	viper.BindPFlag("withMetrics", requestCmd.Flags().Lookup("withMetrics"))
 	viper.BindPFlag("onlyResponseBody", requestCmd.Flags().Lookup("onlyResponseBody"))
 
-	rootCmd.AddCommand(requestCmd)
+	RootCmd.AddCommand(requestCmd)
 }

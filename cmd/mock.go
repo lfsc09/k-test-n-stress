@@ -266,7 +266,7 @@ func init() {
 	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
 	viper.BindPFlag("generate", mockCmd.Flags().Lookup("generate"))
 
-	rootCmd.AddCommand(mockCmd)
+	RootCmd.AddCommand(mockCmd)
 }
 
 // Splits a raw string of format "func:arg1:arg2:...".
