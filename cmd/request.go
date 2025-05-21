@@ -74,7 +74,7 @@ var requestCmd = &cobra.Command{
 		var body io.Reader
 		if data != "" {
 			// Parse the string object content
-			var parseMap map[string]interface{}
+			var parseMap map[string]any
 			if err := json.Unmarshal([]byte(data), &parseMap); err != nil {
 				log.Fatalf("Failed to parse JSON from the provided --data <string>: %v\n", err)
 			}

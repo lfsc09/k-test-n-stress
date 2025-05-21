@@ -138,7 +138,7 @@ Examples:
 			bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
 
 			// Parse the string object content (STEP)
-			var parseMap map[string]interface{}
+			var parseMap map[string]any
 			if err := json.Unmarshal([]byte(parseJson), &parseMap); err != nil {
 				log.Fatalf("Opss..failed to parse JSON from the provided --parseJson <string>: %v\n", err)
 			}
@@ -146,13 +146,13 @@ Examples:
 
 			// Process the parsed map (STEP)
 			mocker := mocker.New()
-			parseMaps := make([]map[string]interface{}, generate)
+			parseMaps := make([]map[string]any, generate)
 			for i := range generate {
-				cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
+				cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
 				if err := processJsonMap(cpParseMap, mocker); err != nil {
 					log.Fatalln(err)
 				}
-				parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
+				parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
 			}
 			bar.Increment()
 
@@ -207,7 +207,7 @@ Examples:
 					bar.Increment()
 
 					// Parse the template file content (STEP)
-					var parseMap map[string]interface{}
+					var parseMap map[string]any
 					if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
 						log.Printf("Opss..failed to parse JSON from the provided --parseFiles <file>: %v\n", err)
 						bar.Abort(false)
@@ -217,15 +217,15 @@ Examples:
 
 					// Process the parsed map (STEP)
 					mocker := mocker.New()
-					parseMaps := make([]map[string]interface{}, generate)
+					parseMaps := make([]map[string]any, generate)
 					for i := range generate {
-						cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
+						cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
 						if err := processJsonMap(cpParseMap, mocker); err != nil {
 							log.Println(err)
 							bar.Abort(false)
 							return
 						}
-						parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
+						parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
 					}
 					bar.Increment()
 
@@ -330,7 +330,7 @@ func interpretString(rawValue string) (string, bool) {
 // It replaces string values with generated mock data based on the function name and parameters.
 // It handles nested maps and arrays of strings or maps.
 // Returns an error if any value is not a string or map.
-func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error {
+func processJsonMap(parseMap map[string]any, mocker *mocker.Mock) error {
 	objKeys := make([]string, 0, len(parseMap))
 	for key := range parseMap {
 		objKeys = append(objKeys, key)
@@ -373,17 +373,17 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error 
 				parseMap[objKey] = mockValue
 			}
 			keyIndex++
-		case map[string]interface{}:
+		case map[string]any:
 			// try to find [digit] in the "key"
 			generateAmount, err := extractDigitInBrackets("object", objKey)
 			if err != nil {
 				return err
 			}
-			// if generating multiple values, convert the map to a slice of maps (but force the type to generic interface{}) and reprocess again
+			// if generating multiple values, convert the map to a slice of maps (but force the type to generic any) and reprocess again
 			if generateAmount > 1 {
-				convertedValue := make([]interface{}, generateAmount)
+				convertedValue := make([]any, generateAmount)
 				for i := range generateAmount {
-					convertedValue[i] = deepcopy.Copy(typedValue).(interface{})
+					convertedValue[i] = deepcopy.Copy(typedValue).(any)
 				}
 				parseMap[objKey] = convertedValue
 			} else {
@@ -392,7 +392,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error 
 				}
 				keyIndex++
 			}
-		case []interface{}:
+		case []any:
 			for itemKey, item := range typedValue {
 				if itemStr, ok := item.(string); ok {
 					interpretedValue, isMockFunction := interpretString(itemStr)
@@ -406,7 +406,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error 
 						return err
 					}
 					typedValue[itemKey] = mockValue
-				} else if itemMap, ok := item.(map[string]interface{}); ok {
+				} else if itemMap, ok := item.(map[string]any); ok {
 					err := processJsonMap(itemMap, mocker)
 					if err != nil {
 						return err
@@ -425,7 +425,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mocker.Mock) error 
 
 // Iterates through the parsed json map and sanitizes the keys by removing segments between bracketes (e.g. [digits]).
 // It handles nested maps.
-func sanitizeJsonMap(parseMap map[string]interface{}) {
+func sanitizeJsonMap(parseMap map[string]any) {
 	// Clone keys to avoid modifying map during iteration
 	objKeys := make([]string, 0, len(parseMap))
 	for objKey := range parseMap {
@@ -437,7 +437,7 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 		sanitizedKey := sanitizeKeyWithBrackets(objKey)
 
 		// Recurse on nested maps
-		if mapValue, ok := objValue.(map[string]interface{}); ok {
+		if mapValue, ok := objValue.(map[string]any); ok {
 			sanitizeJsonMap(mapValue)
 		}
 
@@ -565,7 +565,7 @@ func findTemplateFiles(input string) ([]string, error) {
 // Writes the generated mock data to a file.
 // It creates the directory structure if it doesn't exist.
 // If `preserveFolderStructure` is true, it keeps the original folder structure.
-func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFiles string, result *[]map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
+func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFiles string, result *[]map[string]any, mu *sync.Mutex, createdDirs *map[string]bool) error {
 	var prettyJSON []byte
 	var err error
 	if len(*result) == 1 {
