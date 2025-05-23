@@ -5,14 +5,12 @@ import (
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/cmd"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
 type MockCmdE2ETestSuite struct {
 	suite.Suite
-	// ViperInstance *viper.Viper
 }
 
 func TestMockCmdTestSuite(t *testing.T) {
@@ -25,8 +23,7 @@ func (suite *MockCmdE2ETestSuite) executeCommand(args ...string) (string, error)
 	outBuf := new(bytes.Buffer)
 
 	opts := &cmd.CommandOptions{
-		Out:   outBuf,
-		Viper: viper.New(),
+		Out: outBuf,
 	}
 
 	rootCmd := cmd.NewRootCmd(opts)
@@ -49,34 +46,34 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_MultipleParseFlags() {
 		input    []string
 	}{
 		{
-			testName: "both --parseStr and --parseFile",
-			input:    []string{"mock", "--parseStr", "Hello {{ Person.name }}", "--parseFiles", "test.json"},
+			testName: "both --parse-str and --parseFile",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-files", "test.json"},
 		},
 		{
-			testName: "both --parseStr and --parseJson",
-			input:    []string{"mock", "--parseStr", "Hello {{ Person.name }}", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '"},
+			testName: "both --parse-str and --parse-json",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '"},
 		},
 		{
-			testName: "both --parseJson and --parseFile",
-			input:    []string{"mock", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '", "--parseFiles", "test.json"},
+			testName: "both --parse-json and --parseFile",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-files", "test.json"},
 		},
 		{
-			testName: "all three --parseStr, --parseJson and --parseFile",
-			input:    []string{"mock", "--parseStr", "Hello {{ Person.name }}", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '", "--parseFiles", "test.json"},
+			testName: "all three --parse-str, --parse-json and --parseFile",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-files", "test.json"},
 		},
 	}
 	for _, test := range tests {
 		_, err := suite.executeCommand(test.input...)
 		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "provide only one of the three options: --parseJson, --parseFiles or --parseStr", test.testName)
+		assert.EqualError(suite.T(), err, "provide only one of the three options: --parse-json, --parse-files or --parse-str", test.testName)
 	}
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_InvalidUseOfParseFiles() {
-	testName := "Should raise error when multiple args in --parseFiles"
-	_, err := suite.executeCommand("mock", "--parseFiles", "test.json", "test2.json")
+	testName := "Should raise error when multiple args in --parse-files"
+	_, err := suite.executeCommand("mock", "--parse-files", "test.json", "test2.json")
 	assert.Error(suite.T(), err, testName)
-	assert.EqualError(suite.T(), err, "you passed multiple files to --parseFiles without quotes. Did you mean: --parseFiles \"*.template.json\"?", testName)
+	assert.EqualError(suite.T(), err, "you passed multiple files to --parse-files without quotes. Did you mean: --parse-files \"*.template.json\"?", testName)
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_PreserveFolderStructureFlagInvalidUse() {
@@ -85,18 +82,18 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_PreserveFolderStructur
 		input    []string
 	}{
 		{
-			testName: "--preserveFolderStructure with --parseStr",
-			input:    []string{"mock", "--parseStr", "Hello {{ Person.name }}", "--preserveFolderStructure"},
+			testName: "--preserve-folder-structure with --parse-str",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--preserve-folder-structure"},
 		},
 		{
-			testName: "--preserveFolderStructure with --parseJson",
-			input:    []string{"mock", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '", "--preserveFolderStructure"},
+			testName: "--preserve-folder-structure with --parse-json",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--preserve-folder-structure"},
 		},
 	}
 	for _, test := range tests {
 		_, err := suite.executeCommand(test.input...)
 		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "--preserveFolderStructure option is only available when using --parseFiles", test.testName)
+		assert.EqualError(suite.T(), err, "--preserve-folder-structure option is only available when using --parse-files", test.testName)
 	}
 }
 
@@ -106,18 +103,18 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagInvalidUse
 		input    []string
 	}{
 		{
-			testName: "--generate with --parseStr",
-			input:    []string{"mock", "--parseStr", "Hello {{ Person.name }}", "--generate", "5"},
+			testName: "--generate with --parse-str",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--generate", "5"},
 		},
 		{
-			testName: "--generate with --parseFiles",
-			input:    []string{"mock", "--parseFiles", "test.json", "--generate", "5"},
+			testName: "--generate with --parse-files",
+			input:    []string{"mock", "--parse-files", "test.json", "--generate", "5"},
 		},
 	}
 	for _, test := range tests {
 		_, err := suite.executeCommand(test.input...)
 		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "--generate option is only available when using --parseJson", test.testName)
+		assert.EqualError(suite.T(), err, "--generate option is only available when using --parse-json", test.testName)
 	}
 }
 
@@ -128,11 +125,11 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagInvalidVal
 	}{
 		{
 			testName: "--generate with value equal to 0",
-			input:    []string{"mock", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "0"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "0"},
 		},
 		{
 			testName: "--generate with negative value",
-			input:    []string{"mock", "--parseJson", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "-1"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "-1"},
 		},
 	}
 	for _, test := range tests {
@@ -170,13 +167,13 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldMockFromParseStr() {
 		expectedValue string
 	}{
 		{
-			testName:      "Should mock from --parseStr (no mock functions)",
-			input:         []string{"mock", "--parseStr", "Hello world"},
+			testName:      "Should mock from --parse-str (no mock functions)",
+			input:         []string{"mock", "--parse-str", "Hello world"},
 			expectedValue: "Hello world",
 		},
 		{
-			testName:      "Should mock from --parseStr",
-			input:         []string{"mock", "--parseStr", "Hello {{ Person.name }}"},
+			testName:      "Should mock from --parse-str",
+			input:         []string{"mock", "--parse-str", "Hello {{ Person.name }}"},
 			expectedValue: "Hello ",
 		},
 	}

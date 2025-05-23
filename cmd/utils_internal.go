@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"io"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 type CommandOptions struct {
-	Out   io.Writer
-	Viper *viper.Viper
+	Out io.Writer
 }
 
 const (

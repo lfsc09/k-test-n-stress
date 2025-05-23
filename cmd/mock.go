@@ -25,9 +25,9 @@ func NewMockCmd(opts *CommandOptions) *cobra.Command {
 	mockCmd := &cobra.Command{
 		Use:   "mock",
 		Short: "Generate mock data based from an object string or from template files",
-		Long: `Generate mock data based on --parseStr, --parseJson or --parseFiles options.
+		Long: `Generate mock data based on --parse-str, --parse-json or --parse-files options.
 	
-* Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFiles)
+* Add --preserve-folder-structure to keep the folder structure of the input files. (Only works with --parse-files)
 
   e.g.: Having a template folder structure like this:
 
@@ -50,8 +50,8 @@ Mock functions:
 
 Controling the number of generated data:
 
-* Add --generate to specify the number of root objects to generate. (Only works with --parseJson)
-* When using --parseFiles, specify the desired number of root objects in the template file's name, between brackets.
+* Add --generate to specify the number of root objects to generate. (Only works with --parse-json)
+* When using --parse-files, specify the desired number of root objects in the template file's name, between brackets.
 
   e.g.: A template file named "employees[5].template.json" will generate an array of 5 employees.
 
@@ -104,21 +104,21 @@ Controling the number of generated data:
   }
 
 Examples:
-  ktns mock --parseStr '{{ Person.name }}'
-  ktns mock --parseStr 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old'
-  ktns mock --parseJson '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
-  ktns mock --parseJson '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
-  ktns mock --parseFiles "*.template.json"
-  ktns mock --parseFiles "test/templates/*.template.json"
-  ktns mock --parseFiles "test/templates" --preserveFolderStructure
+  ktns mock --parse-str '{{ Person.name }}'
+  ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old'
+  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
+  ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
+  ktns mock --parse-files "*.template.json"
+  ktns mock --parse-files "test/templates/*.template.json"
+  ktns mock --parse-files "test/templates" --preserve-folder-structure
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			list := opts.Viper.GetBool("list")
-			parseJson := opts.Viper.GetString("parseJson")
-			parseFiles := opts.Viper.GetString("parseFiles")
-			parseStr := opts.Viper.GetString("parseStr")
-			preserveFolderStructure := opts.Viper.GetBool("preserveFolderStructure")
-			generate := opts.Viper.GetInt("generate")
+			list, _ := cmd.Flags().GetBool("list")
+			parseStr, _ := cmd.Flags().GetString("parse-str")
+			parseJson, _ := cmd.Flags().GetString("parse-json")
+			parseFiles, _ := cmd.Flags().GetString("parse-files")
+			preserveFolderStructure, _ := cmd.Flags().GetBool("preserve-folder-structure")
+			generate, _ := cmd.Flags().GetInt("generate")
 
 			if list {
 				mocker := mocker.New()
@@ -128,7 +128,7 @@ Examples:
 
 			runningParseStr, runningParseJson, runningParseFiles := false, false, false
 
-			// Check if --parseJson, --parseFiles or --parseStr is provided
+			// Check if --parse-json, --parse-files or --parse-str is provided
 			parseCheck := 0
 			if parseStr != "" {
 				parseCheck++
@@ -145,19 +145,19 @@ Examples:
 			if parseCheck == 0 {
 				return fmt.Errorf("nothing to be parsed, ask for help -h or --help")
 			} else if parseCheck > 1 {
-				return fmt.Errorf("provide only one of the three options: --parseJson, --parseFiles or --parseStr")
+				return fmt.Errorf("provide only one of the three options: --parse-json, --parse-files or --parse-str")
 			}
 
 			if runningParseFiles && len(args) > 0 {
-				return fmt.Errorf("you passed multiple files to --parseFiles without quotes. Did you mean: --parseFiles \"*.template.json\"?")
+				return fmt.Errorf("you passed multiple files to --parse-files without quotes. Did you mean: --parse-files \"*.template.json\"?")
 			}
 
 			if preserveFolderStructure && !runningParseFiles {
-				return fmt.Errorf("--preserveFolderStructure option is only available when using --parseFiles")
+				return fmt.Errorf("--preserve-folder-structure option is only available when using --parse-files")
 			}
 
 			if generate > 1 && !runningParseJson {
-				return fmt.Errorf("--generate option is only available when using --parseJson")
+				return fmt.Errorf("--generate option is only available when using --parse-json")
 			}
 
 			if generate <= 0 {
@@ -184,7 +184,7 @@ Examples:
 				fmt.Fprintf(opts.Out, "%s\n", mockedStr)
 			}
 
-			// Parse string json object from `--parseJson`
+			// Parse string json object from `--parse-json`
 			if runningParseJson {
 				outPath := ""
 				bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
@@ -192,7 +192,7 @@ Examples:
 				// Parse the string object content (STEP)
 				var parseMap map[string]any
 				if err := json.Unmarshal([]byte(parseJson), &parseMap); err != nil {
-					return fmt.Errorf("failed to parse JSON from the provided --parseJson '%w'", err)
+					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
 				}
 				bar.Increment()
 
@@ -223,14 +223,14 @@ Examples:
 				bar.Increment()
 			}
 
-			// Parse object from `--parseFiles` files
+			// Parse object from `--parse-files` files
 			if runningParseFiles {
 				foundTemplateFiles, err := findTemplateFiles(parseFiles)
 				if err != nil {
-					return fmt.Errorf("failed to find template files from the provided --parseFiles '%w'", err)
+					return fmt.Errorf("failed to find template files from the provided --parse-files '%w'", err)
 				}
 				if len(foundTemplateFiles) == 0 {
-					return fmt.Errorf("no template files found in the provided --parseFiles '%s'", parseFiles)
+					return fmt.Errorf("no template files found in the provided --parse-files '%s'", parseFiles)
 				}
 
 				var wg sync.WaitGroup
@@ -247,7 +247,7 @@ Examples:
 						templateFileContent, err := os.ReadFile(inPath)
 						if err != nil {
 							bar.Abort(false)
-							return fmt.Errorf("failed to read --parseFiles '%w'", err)
+							return fmt.Errorf("failed to read --parse-file '%w'", err)
 						}
 						generate, err := extractDigitInBrackets("file", inPath)
 						if err != nil {
@@ -260,7 +260,7 @@ Examples:
 						var parseMap map[string]any
 						if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
 							bar.Abort(false)
-							return fmt.Errorf("failed to parse JSON from the provided --parseFiles '%w'", err)
+							return fmt.Errorf("failed to parse JSON from the provided --parse-file '%w'", err)
 						}
 						bar.Increment()
 
@@ -303,18 +303,11 @@ Examples:
 	}
 
 	mockCmd.Flags().Bool("list", false, "list all available mock functions")
-	mockCmd.Flags().String("parseStr", "", "pass a string to be parsed. The mock data will be generated based on this provided string")
-	mockCmd.Flags().String("parseJson", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
-	mockCmd.Flags().String("parseFiles", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found template files")
-	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parseFiles)")
-	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parseJson)")
-
-	opts.Viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
-	opts.Viper.BindPFlag("parseStr", mockCmd.Flags().Lookup("parseStr"))
-	opts.Viper.BindPFlag("parseJson", mockCmd.Flags().Lookup("parseJson"))
-	opts.Viper.BindPFlag("parseFiles", mockCmd.Flags().Lookup("parseFiles"))
-	opts.Viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
-	opts.Viper.BindPFlag("generate", mockCmd.Flags().Lookup("generate"))
+	mockCmd.Flags().String("parse-str", "", "pass a string to be parsed. The mock data will be generated based on this provided string")
+	mockCmd.Flags().String("parse-json", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
+	mockCmd.Flags().String("parse-files", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found template files")
+	mockCmd.Flags().Bool("preserve-folder-structure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parse-file)")
+	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse-json)")
 
 	// Configure cobra ouput streams to use the custom 'Out'
 	mockCmd.SetOut(opts.Out)
@@ -617,7 +610,7 @@ func findTemplateFiles(input string) ([]string, error) {
 
 // Writes the generated mock data to a file.
 // It creates the directory structure if it doesn't exist.
-// If `preserveFolderStructure` is true, it keeps the original folder structure.
+// If `preserve-folder-structure` is true, it keeps the original folder structure.
 func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFiles string, result *[]map[string]any, mu *sync.Mutex, createdDirs *map[string]bool) error {
 	var prettyJSON []byte
 	var err error
@@ -633,7 +626,7 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 	if preserveFolderStructure {
 		normalizedParseFrom, err := normalizeParseFrom(parseFiles)
 		if err != nil {
-			return fmt.Errorf("failed to normalize '--parseFiles' path '%w'", err)
+			return fmt.Errorf("failed to normalize '--parse-file' path '%w'", err)
 		}
 		relPath, err := filepath.Rel(normalizedParseFrom, inPath)
 		if err != nil {

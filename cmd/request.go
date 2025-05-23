@@ -20,17 +20,18 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 		Short: "Generate mock data based from an object string or from template files",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			method := strings.ToUpper(opts.Viper.GetString("method"))
-			forceHttps := opts.Viper.GetBool("https")
-			urlStr := opts.Viper.GetString("url")
-			headers := opts.Viper.GetStringSlice("header")
-			data := opts.Viper.GetString("data")
-			queryParams := opts.Viper.GetStringSlice("qs")
-			// responseAccessor := opts.Viper.GetString("responseAccessor")
-			withMetrics := opts.Viper.GetBool("withMetrics")
-			onlyResponseBody := opts.Viper.GetBool("onlyResponseBody")
+			method, _ := cmd.Flags().GetString("method")
+			forceHttps, _ := cmd.Flags().GetBool("https")
+			urlStr, _ := cmd.Flags().GetString("url")
+			headers, _ := cmd.Flags().GetStringSlice("header")
+			data, _ := cmd.Flags().GetString("data")
+			queryParams, _ := cmd.Flags().GetStringSlice("qs")
+			//responseAccessor := cmd.Flags().GetString("response-accessor")
+			withMetrics, _ := cmd.Flags().GetBool("with-metrics")
+			onlyResponseBody, _ := cmd.Flags().GetBool("only-response-body")
 
 			mocker := mocker.New()
+			method = strings.ToUpper(method)
 
 			// Validate flags
 			if urlStr == "" {
@@ -152,19 +153,9 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 	requestCmd.Flags().StringArray("header", []string{}, "pass a string 'header', in key:value format, to be used as the request header, (e.g. 'Authorization: Bearer {token}')")
 	requestCmd.Flags().String("data", "", "pass a JSON object as a string to be used as the request body")
 	requestCmd.Flags().StringArray("qs", []string{}, "pass a string 'query string' to be used as the request query string")
-	requestCmd.Flags().String("responseAccessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
-	requestCmd.Flags().Bool("withMetrics", true, "if set, show metrics of the request")
-	requestCmd.Flags().Bool("onlyResponseBody", false, "if set, the command output will be only the response's body, nothing more")
-
-	opts.Viper.BindPFlag("method", requestCmd.Flags().Lookup("method"))
-	opts.Viper.BindPFlag("https", requestCmd.Flags().Lookup("https"))
-	opts.Viper.BindPFlag("url", requestCmd.Flags().Lookup("url"))
-	opts.Viper.BindPFlag("header", requestCmd.Flags().Lookup("header"))
-	opts.Viper.BindPFlag("data", requestCmd.Flags().Lookup("data"))
-	opts.Viper.BindPFlag("qs", requestCmd.Flags().Lookup("qs"))
-	opts.Viper.BindPFlag("responseAccessor", requestCmd.Flags().Lookup("responseAccessor"))
-	opts.Viper.BindPFlag("withMetrics", requestCmd.Flags().Lookup("withMetrics"))
-	opts.Viper.BindPFlag("onlyResponseBody", requestCmd.Flags().Lookup("onlyResponseBody"))
+	requestCmd.Flags().String("response-accessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
+	requestCmd.Flags().Bool("with-metrics", true, "if set, show metrics of the request")
+	requestCmd.Flags().Bool("only-response-body", false, "if set, the command output will be only the response's body, nothing more")
 
 	// Configure cobra ouput streams to use the custom 'Out'
 	requestCmd.SetOut(opts.Out)
