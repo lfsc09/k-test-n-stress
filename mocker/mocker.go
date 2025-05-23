@@ -2,6 +2,7 @@ package mocker
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 type Mocker interface {
-	List()
+	List(out io.Writer)
 	Generate(mockFunction string, functionParams []string) (string, error)
 }
 
@@ -27,105 +28,115 @@ func New() *Mock {
 	}
 }
 
-func (m *Mock) List() {
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("ADDRESS functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Address.latitude", "Generates a random latitude")
-	fmt.Printf("%-40s | %s\n", "Address.longitude", "Generates a random longitude")
-	fmt.Printf("%-40s | %s\n", "Address.postCode", "Generates a random post code")
-	fmt.Printf("%-40s | %s\n", "Address.country", "Generates a random country")
-	fmt.Printf("%-40s | %s\n", "Address.state", "Generates a random state")
-	fmt.Printf("%-40s | %s\n", "Address.city", "Generates a random city")
-	fmt.Printf("%-40s | %s\n", "Address.streetName", "Generates a random street name")
-	fmt.Printf("%-40s | %s\n", "Address.buildingNumber", "Generates a random building number")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("BOOLEAN functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Boolean.boolean", "Generates a random boolean")
-	fmt.Printf("%-40s | %s\n", "Boolean.booleanWithChance:[chance]", "Generates a random boolean with a chance of true")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("CAR functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Car.maker", "Generates a random car maker")
-	fmt.Printf("%-40s | %s\n", "Car.model", "Generates a random car model")
-	fmt.Printf("%-40s | %s\n", "Car.plate", "Generates a random car plate")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("COMPANY functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Company.name", "Generates a random company name")
-	fmt.Printf("%-40s | %s\n", "Company.suffix", "Generates a random company suffix")
-	fmt.Printf("%-40s | %s\n", "Company.catchPhrase", "Generates a random company catch phrase")
-	fmt.Printf("%-40s | %s\n", "Company.bs", "Generates a random company BS")
-	fmt.Printf("%-40s | %s\n", "Company.jobTitle", "Generates a random company job title")
-	fmt.Printf("%-40s | %s\n", "Company.cnpj", "Generates a random valid CNPJ")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("CURRENCY functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Currency.currencyCode", "Generates a random currency code")
-	fmt.Printf("%-40s | %s\n", "Currency.currencyContry", "Generates a random currency country")
-	fmt.Printf("%-40s | %s\n", "Currency.currencyName", "Generates a random currency name")
-	fmt.Printf("%-40s | %s\n", "Currency.currencyNumber", "Generates a random currency number")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("FILE functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "File.filenameWithExtension", "Generates a random filename with extension")
-	fmt.Printf("%-40s | %s\n", "File.extension", "Generates a random file extension")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("INTERNET functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Internet.domain", "Generates a random domain")
-	fmt.Printf("%-40s | %s\n", "Internet.email", "Generates a random email")
-	fmt.Printf("%-40s | %s\n", "Internet.ipv4", "Generates a random IPv4 address")
-	fmt.Printf("%-40s | %s\n", "Internet.macAddress", "Generates a random MAC address")
-	fmt.Printf("%-40s | %s\n", "Internet.password", "Generates a random password")
-	fmt.Printf("%-40s | %s\n", "Internet.url", "Generates a random URL")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("LOREM functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Lorem.paragraph:[sentences]", "Generates a random paragraph with N number of sentences")
-	fmt.Printf("%-40s | %s\n", "Lorem.paragraphs:[paragraphs]", "Generates N number of random paragraphs")
-	fmt.Printf("%-40s | %s\n", "Lorem.sentence:[words]", "Generates a random sentence with N number of words")
-	fmt.Printf("%-40s | %s\n", "Lorem.sentences:[sentences]", "Generates N number of random sentences")
-	fmt.Printf("%-40s | %s\n", "Lorem.word", "Generates a random word")
-	fmt.Printf("%-40s | %s\n", "Lorem.words:[words]", "Generates N number of random words")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("NUMBER functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Number.number:[decimals]:[min]:[max]", "Generates a random number with N decimals, from min up to max")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("PAYMENT functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Payment.creditCardExpirationDate", "Generates a random credit card expiration date")
-	fmt.Printf("%-40s | %s\n", "Payment.creditCardNumber", "Generates a random credit card number")
-	fmt.Printf("%-40s | %s\n", "Payment.creditCardType", "Generates a random credit card type")
-	fmt.Printf("%-40s | %s\n", "Payment.creditCardCvv", "Generates a random credit card CVV")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("PERSON functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Person.phoneNumber", "Generates a random phone number")
-	fmt.Printf("%-40s | %s\n", "Person.email", "Generates a random email")
-	fmt.Printf("%-40s | %s\n", "Person.firstName", "Generates a random first name")
-	fmt.Printf("%-40s | %s\n", "Person.lastName", "Generates a random last name")
-	fmt.Printf("%-40s | %s\n", "Person.name", "Generates a random name")
-	fmt.Printf("%-40s | %s\n", "Person.cpf", "Generates a random valid CPF")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("REGEX functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Regex.regex:[regex]", "Generates a random string based on the regex pattern")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("TIME functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "Time.date", "Generates a random date")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("UUID functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "UUID.uuidv4", "Generates a random UUID v4")
-	fmt.Println("\n" + strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("USER AGENT functions:\n")
-	fmt.Println(strings.Repeat("-", 40) + "-+-" + strings.Repeat("-", 60))
-	fmt.Printf("%-40s | %s\n", "UserAgent.userAgent", "Generates a random user agent")
-	fmt.Printf("\n")
+func tableLineDivider(colSizes []int) string {
+	var line string
+	for idx, size := range colSizes {
+		if idx == 0 {
+			line += strings.Repeat("-", size)
+		} else {
+			line += "+" + strings.Repeat("-", size)
+		}
+	}
+	return line
+}
+
+func tableLineHeader(colSizes []int) string {
+	var line string
+	for idx, size := range colSizes {
+		if idx == 0 {
+			line += fmt.Sprintf("%-*s", size, "FUNCTION")
+		} else {
+			line += "| " + fmt.Sprintf("%-*s", size, "DESCRIPTION")
+		}
+	}
+	return line
+}
+
+func tableLineData(colSizes []int, data []string) string {
+	var line string
+	for idx, size := range colSizes {
+		if idx == 0 {
+			line += fmt.Sprintf("%-*s", size, data[idx])
+		} else {
+			line += "| " + fmt.Sprintf("%-*s", size, data[idx])
+		}
+	}
+	return line
+}
+
+// fmt.Fprintf(out, "%-40s | %s\n", "Address.latitude", "Generates a random latitude")
+func (m *Mock) List(out io.Writer) {
+	colSizes := []int{40, 60}
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineHeader(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.latitude", "Generates a random latitude"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.longitude", "Generates a random longitude"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.postCode", "Generates a random post code"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.country", "Generates a random country"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.state", "Generates a random state"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.city", "Generates a random city"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.streetName", "Generates a random street name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Address.buildingNumber", "Generates a random building number"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Boolean.boolean", "Generates a random boolean"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Boolean.booleanWithChance:[chance]", "Generates a random boolean with a chance of true"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Car.maker", "Generates a random car maker"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Car.model", "Generates a random car model"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Car.plate", "Generates a random car plate"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.name", "Generates a random company name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.suffix", "Generates a random company suffix"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.catchPhrase", "Generates a random company catch phrase"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.bs", "Generates a random company BS"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.jobTitle", "Generates a random company job title"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Company.cnpj", "Generates a random valid brazilian cnpj"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Currency.currencyCode", "Generates a random currency code"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Currency.currencyContry", "Generates a random currency country"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Currency.currencyName", "Generates a random currency name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Currency.currencyNumber", "Generates a random currency number"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"File.filenameWithExtension", "Generates a random filename with extension"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"File.extension", "Generates a random file extension"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.domain", "Generates a random domain"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.email", "Generates a random email"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.ipv4", "Generates a random IPv4 address"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.macAddress", "Generates a random MAC address"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.password", "Generates a random password"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Internet.url", "Generates a random URL"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.paragraph:[sentences]", "Generates a random paragraph with N number of sentences"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.paragraphs:[paragraphs]", "Generates N number of random paragraphs"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.sentence:[words]", "Generates a random sentence with N number of words"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.sentences:[sentences]", "Generates N number of random sentences"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.word", "Generates a random word"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Lorem.words:[words]", "Generates N number of random words"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Number.number:[decimals]:[min]:[max]", "Generates a random number with N decimals, from min up to max"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Payment.creditCardExpirationDate", "Generates a random credit card expiration date"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Payment.creditCardNumber", "Generates a random credit card number"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Payment.creditCardType", "Generates a random credit card type"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Payment.creditCardCvv", "Generates a random credit card CVV"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.phoneNumber", "Generates a random phone number"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.email", "Generates a random email"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.firstName", "Generates a random first name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.lastName", "Generates a random last name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.name", "Generates a random name"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Person.cpf", "Generates a random valid brazilian cpf"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Regex.regex:[regex]", "Generates a random string based on the regex pattern"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Time.date", "Generates a random date"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UUID.uuidv4", "Generates a random UUID v4"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UserAgent.userAgent", "Generates a random user agent"}))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 }
 
 func (m *Mock) Generate(mockFunction string, functionParams []string) (string, error) {
@@ -303,7 +314,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "Payment.creditCardCvv":
 		cvv, err := regen.Generate("[0-9]{3}")
 		if err != nil {
-			return "", fmt.Errorf("Failed to generate CVV: %v\n", err)
+			return "", fmt.Errorf("failed to generate CVV '%w'", err)
 		}
 		return cvv, nil
 	/*
@@ -347,7 +358,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	*/
 	case "Regex.regex":
 		if len(functionParams) == 0 {
-			return "", fmt.Errorf("Regex function requires a regex pattern as parameter")
+			return "", fmt.Errorf("regex function requires a regex pattern as parameter")
 		}
 		regex, err := extractRegex(functionParams[0])
 		if err != nil {
@@ -355,7 +366,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		}
 		randomRegex, err := regen.Generate(regex)
 		if err != nil {
-			return "", fmt.Errorf("Failed to generate regex: %v\n", err)
+			return "", fmt.Errorf("failed to generate regex '%w'", err)
 		}
 		return randomRegex, nil
 	/*
@@ -374,6 +385,6 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "UserAgent.userAgent":
 		return m.jaswdrFaker.UserAgent().UserAgent(), nil
 	default:
-		return "", fmt.Errorf("Unknown mock function: %v", mockFunction)
+		return "", fmt.Errorf("unknown mock function '%s'", mockFunction)
 	}
 }
