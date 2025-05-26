@@ -154,7 +154,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 	requestCmd.Flags().String("data", "", "pass a JSON object as a string to be used as the request body")
 	requestCmd.Flags().StringArray("qs", []string{}, "pass a string 'query string' to be used as the request query string")
 	requestCmd.Flags().String("response-accessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
-	requestCmd.Flags().Bool("with-metrics", true, "if set, show metrics of the request")
+	requestCmd.Flags().Bool("with-metrics", false, "if set, show metrics of the request")
 	requestCmd.Flags().Bool("only-response-body", false, "if set, the command output will be only the response's body, nothing more")
 
 	// Configure cobra ouput streams to use the custom 'Out'
