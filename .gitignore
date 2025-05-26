@@ -33,4 +33,4 @@ go.work.sum
 !/.github/
 !/.github/**
 !/cmd
-!/mock
+!/mocker

@@ -1,33 +1,43 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
-var execFile string
-var rootCmd = &cobra.Command{
-	Use:   "ktns",
-	Short: "K Test N Stress is a tool to generate mock data and testing/stressing HTTP endpoints.",
-	Long:  `K Test N Stress is a tool to generate custom mock data and testing/stressing HTTP endpoints with several consigurations.`,
+func NewRootCmd(opts *CommandOptions) *cobra.Command {
+	if opts == nil {
+		opts = &CommandOptions{
+			Out: os.Stdout,
+		}
+	}
+
+	rootCmd := &cobra.Command{
+		Use:   "ktns",
+		Short: "K Test N Stress is a tool to generate mock data, make HTTP requests, stress HTTP endpoints and seed databases.",
+		Long:  `K Test N Stress is a tool to generate mock data, make HTTP requests, stress HTTP endpoints and seed databases with several configurations.`,
+		CompletionOptions: cobra.CompletionOptions{
+			HiddenDefaultCmd: true,
+		},
+	}
+
+	// Configure cobra ouput streams to use the custom 'Out'
+	rootCmd.SetOut(opts.Out)
+
+	rootCmd.AddCommand(NewMockCmd(opts))
+	rootCmd.AddCommand(NewRequestCmd(opts))
+
+	// Disable automatic call of `--help` during errors
+	rootCmd.SilenceUsage = true
+
+	return rootCmd
 }
 
-func Execute() error {
-	return rootCmd.Execute()
-}
-
-func init() {
-	cobra.OnInitialize(initConfig)
-
-	rootCmd.PersistentFlags().StringVarP(&execFile, "file", "f", "execute.yaml", "ktns execution filename, to run without CLI flags.")
-}
-
-func initConfig() {
-	if execFile != "" {
-		viper.SetConfigFile(execFile) // Use exec file from the flag.
-	} else {
-		viper.SetConfigName("execute") // Expected name of execution file (without extension)
-		viper.SetConfigType("yaml")
-		viper.AddConfigPath(".") // Find at current directory.
+func Execute() {
+	// Use default options for real application
+	rootCmd := NewRootCmd(nil)
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
 	}
 }
