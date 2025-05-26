@@ -1,3 +1,5 @@
+![Go Badge](https://img.shields.io/badge/Go-1.24.1-00ADD8.svg?style=for-the-badge&logo=Go&logoColor=white)
+
 # The project
 
 k-test-n-stress is a simple tool to facilate:
@@ -15,17 +17,6 @@ All in the command line with flags.
 ktns <command> <flags>
 ```
 
-Or by specifying `commands` and `flags` in a `.yaml` file and feeding it to `ktns`.
-
-```bash
-ktns -f <file.yaml>
-```
-
-```yaml
-command: <command>
-  <flag>: <flag-value>
-```
-
 </br>
 </br>
 
@@ -40,22 +31,29 @@ Mock function must be wrapped in `{{ Person.name }}`, or values passed will be i
 ### Flags
 
 - `--list`: If set, it will list all available mock functions.
-- `--parse`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
-- `--parseFrom`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
-- `--preserveFolderStructure`: If set, the folder structure of the input files will be preserved in the output files.
-- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse`). (More info [here](#generating-multiple-values))
+- `--parse-str`: Pass a string to be parsed. The mock data will be generated based on the provided string.
+- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
+- `--parse-files`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
+- `--preserve-folder-structure`: If set, the folder structure of the input files will be preserved in the output files.
+- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse-json`). (More info [here](#generating-multiple-values))
 
 </br>
 
 ### Examples
 
-#### Example (`--parse`)
+#### Example (`--parse-str`)
 
 ```bash
-ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
+ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old.'
 ```
 
-#### Example (`--parseFrom`)
+#### Example (`--parse-json`)
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
+```
+
+#### Example (`--parse-files`)
 
 ```json
 {
@@ -68,10 +66,10 @@ ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ 
 ```
 
 ```bash
-  ktns mock --parseFrom example.template.json
-  ktns mock --parseFrom "*.template.json"
-  ktns mock --parseFrom "test/templates/*.template.json"
-  ktns mock --parseFrom "test/templates" --preserveFolderStructure
+  ktns mock --parse-files example.template.json
+  ktns mock --parse-files "*.template.json"
+  ktns mock --parse-files "test/templates/*.template.json"
+  ktns mock --parse-files "test/templates" --preserve-folder-structure
 ```
 
 </br>
@@ -84,6 +82,36 @@ The `value` of an object key may be:
 - A `string` value with the **Faker function name *(between double brackets)***.
 - An `object`, detailing an inner object.
 - An `array` of either `string` OR `object`.
+
+#### Preservation of folder structure
+
+When using `--parse-files`, you can may have a folder structure, for instance, like this:
+
+```
+├── company.template.json
+└── assets/
+  ├── employee[10].template.json
+  └── building[2].template.json
+```
+
+If you wish to generate the fake data and preserve this structure, use the flag `--preserve-folder-structure` to have a result like:
+
+```
+└── out/
+  ├── company.json
+  └── assets/
+    ├── employee[10].json
+    └── building[2].json
+```
+
+Otherwise your result files will be flatten:
+
+```
+└── out/
+  ├── company.json
+  ├── employee[10].json
+  └── building[2].json
+```
 
 #### Mock functions optional parameters
 
@@ -119,13 +147,13 @@ ktns mock --list
 
 ##### Root objects
 
-Generating muliple root objects can be done with the flag `--generate <number>` if using `--parse`.
+Generating muliple root objects can be done with the flag `--generate <number>` if using `--parse-json`.
 
 ```bash
-ktns mock --parse '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
 ```
 
-When using `--parseFrom`, specify the desired number of root objects in the template file's name, between brackets.
+When using `--parse-files`, specify the desired number of root objects in the template file's name, between brackets.
 
 A template file named `employees[5].template.json` bellow:
 
@@ -185,3 +213,155 @@ Will produce:
   ]
 }
 ```
+
+</br>
+</br>
+
+## Http (`request`) command
+
+```bash
+ktns request <flags>
+```
+
+> ***Data can be mocked currently only in `--data`, `--qs` and `--url` flags.**
+
+### Flags
+
+- `--method`: The Http method (`GET` | `POST` | `PUT` | `DELETE`).
+- `--https`: If set, force https. _(If not stated, it will use the `url` protocol)_
+- `--url`: The request url with added Url params. _(e.g. `localhost:3000`, `localhost:8000/api/users`, `api.com/user/{{UUID.uuidv4}}`)_
+- `--header`: Multiple `string` values to be set as headers for the requests.
+- `--data`: A `string` json object defining data to be used at the request body.
+- `--qs`: Multiple `string` values defining query string values to be used at the request.
+- `--response-accessor`: A `string` value to specify how the response should be accessed, with the idea of returning a more specific segment of the response. _(If unable to access, it returns the whole response)_
+- `--with-metrics`: If set, show metrics of the request on the response.
+- `--only-response-body`: If set, will return only the response's body.
+
+</br>
+
+### Examples
+
+#### Simple examples
+
+```bash
+ktns request --method GET --url https://some-api.com/object
+ktns request --method POST --url https://some-api.com/object/new --data '{ "name": "A new object" }'
+ktns request --method PUT --url https://some-api.com/object/<object-id> --data '{ "name": "A changed object" }'
+ktns request --method DELETE --url https://some-api.com/object/<object-id>
+```
+
+#### Mocking request data
+
+```bash
+ktns request
+  --medhod POST
+  --url https://some-api.com/person/new
+  --data '{ "name": "{{ Person.name }}", "phones[3]": "{{ Person.phoneNumber }}" }'
+```
+
+#### Mocking query string data
+
+```bash
+ktns request
+  --medhod GET
+  --url https://some-api.com/person
+  --qs 'ageMin={{ Number.number:0:1:10 }}'
+  --qs 'ageMax={{ Number.number:0:50:55 }}'
+```
+
+#### Mocking url param data
+
+```bash
+ktns request
+  --medhod GET
+  --url https://some-api.com/person/{{ UUID.uuidv4 }}
+```
+
+#### Forcing HTTPS
+
+Forcing it, will produce `https://localhost:8000/person`.
+
+```bash
+ktns request
+  --medhod GET
+  --url localhost:8000/person
+  --https
+```
+
+#### Adding authentication header
+
+```bash
+ktns request
+  --medhod GET
+  --url https://some-api/person
+  --header "Authentication: Bearer <token>"
+```
+
+</br>
+
+### Response
+
+A standard response will be like:
+
+```bash
+Status: 200 OK
+URL: https://some-api/objects
+Headers:
+  Content-Length: 2731
+  Access-Control-Allow-Origin: *
+  Content-Type: application/json; charset=utf-8
+  Server: Some
+  Via: 2.0 some-router
+  X-Ratelimit-Remaining: 48
+  Date: Mon, 02 May 2024 13:17:41 GMT
+  ...
+Body:
+{ ... }
+```
+
+#### Adding metrics with `--with-metrics`
+
+```bash
+Status: 200 OK
+Metrics:
+  Duration: [968.00ms] 
+  Size: [2.67 KB]
+URL: https://some-api/objects
+Headers:
+  ...
+Body:
+{ ... }
+```
+
+#### Get only body result `--only-response-body`
+
+```bash
+{ ... }
+```
+
+#### Get more specific body response `--response-accessor <accessor>`
+
+> To be done.
+
+</br>
+</br>
+
+# Development
+
+The `Cobra` commands are in `/cmd` along with its tests.
+
+The `/mocker` folder holds the mocker object that currently only uses [`github.com/jaswdr/faker/v2`](https://github.com/jaswdr/faker) for most of the mock functions. Additional function were added manually.
+
+### Execute app
+
+```bash
+go run . <subparam> [flags]
+```
+
+### Run tests
+
+```bash
+go test ./...
+```
+
+

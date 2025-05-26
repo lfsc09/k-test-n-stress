@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,237 +11,308 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/mohae/deepcopy"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/vbauerster/mpb/v8"
 	"github.com/vbauerster/mpb/v8/decor"
-)
-
-const (
-	KB = 1 << 10
-	MB = 1 << 20
-	GB = 1 << 30
 )
 
 var filenameNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]\.template\.json$`)
 var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
-var mockCmd = &cobra.Command{
-	Use:   "mock",
-	Short: "Generate mock data based from an object string or from template files",
-	Long: `Generate mock data based on --parse or --parseFrom options.
+func NewMockCmd(opts *CommandOptions) *cobra.Command {
+	mockCmd := &cobra.Command{
+		Use:   "mock",
+		Short: "Generate mock data based from an object string or from template files",
+		Long: `Generate mock data based on --parse-str, --parse-json or --parse-files options.
 	
-* Add --preserveFolderStructure to keep the folder structure of the input files. (Only works with --parseFrom)
+* Add --preserve-folder-structure to keep the folder structure of the input files. (Only works with --parse-files)
 
-e.g.: Having a template folder structure like this:
+  e.g.: Having a template folder structure like this:
 
-/company.template.json
-/assets
-  employee[10].template.json
-  building[2].template.json
+  ├── company.template.json
+  └── assets/
+    ├── employee[10].template.json
+    └── building[2].template.json
 
-Will result in mocked results in the same structure.
+  Will result in mocked results in the same structure.
 
-The mock functions:
+  ├── company.json
+  └── assets/
+    ├── employee[10].json
+    └── building[2].json
+
+Mock functions:
 
 * List available mock functions with --list.
-* Always call the mock function with the format {{ functionName::arg1:arg2:... }}, values not wrapped in double brackets will be considered raw values.
+* Always call the mock function with the format {{ functionName::arg1:arg2:... }}. (Values not wrapped in double brackets will be considered raw values)
 
 Controling the number of generated data:
 
-* Add --generate to specify the number of root objects to generate. (Only works with --parse)
-* When using --parseFrom, specify the desired number of root objects in the template file's name, between brackets. (e.g., "employees[5].template.json" will generate an array of 5 root objects)
-* For inner objects, also pass the desired number between brackets in the object's "key". (e.g. { "person[5]": { "name": "{{ Person.name }}" } } will generate an array of 5 inner objects)
+* Add --generate to specify the number of root objects to generate. (Only works with --parse-json)
+* When using --parse-files, specify the desired number of root objects in the template file's name, between brackets.
+
+  e.g.: A template file named "employees[5].template.json" will generate an array of 5 employees.
+
+  Template:
+  {
+    "name": "{{ Person.name }}"
+  }
+
+  Will generate:
+  [
+    { "name": ... },
+    { "name": ... },
+    { "name": ... },
+    { "name": ... },
+    { "name": ... }
+  ]
+
+* For inner objects, also pass the desired number between brackets in the object's "key".
+
+  e.g.:
+  {
+    "employees[5]": {
+      "name": "{{ Person.name }}",
+    }
+  }
+
+  Will generate an array of 5 employees with random names.
+
+  {
+    "employees": [
+      { "name": ... },
+      { "name": ... },
+      { "name": ... },
+      { "name": ... },
+      { "name": ... }
+    ]
+  }
+
 * To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.phoneNumber }}" } will generate an array of 5 phone numbers)
 
+  e.g.:
+  {
+    "phones[5]": "{{ Person.phoneNumber }}"
+  }
+
+  Will generate an array of 5 employees with random names.
+
+  {
+    "phones": [ "...", "...", "...", "...", "..." ]
+  }
+
 Examples:
-  ktns mock --parse '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
-  ktns mock --parse '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
-  ktns mock --parseFrom "*.template.json"
-  ktns mock --parseFrom "test/templates/*.template.json"
-  ktns mock --parseFrom "test/templates" --preserveFolderStructure
+  ktns mock --parse-str '{{ Person.name }}'
+  ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old'
+  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
+  ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
+  ktns mock --parse-files "*.template.json"
+  ktns mock --parse-files "test/templates/*.template.json"
+  ktns mock --parse-files "test/templates" --preserve-folder-structure
 	`,
-	Run: func(cmd *cobra.Command, args []string) {
-		list := viper.GetBool("list")
-		parseStr := viper.GetString("parse")
-		parseFrom := viper.GetString("parseFrom")
-		preserveFolderStructure := viper.GetBool("preserveFolderStructure")
-		generate := viper.GetInt("generate")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			list, _ := cmd.Flags().GetBool("list")
+			parseStr, _ := cmd.Flags().GetString("parse-str")
+			parseJson, _ := cmd.Flags().GetString("parse-json")
+			parseFiles, _ := cmd.Flags().GetString("parse-files")
+			preserveFolderStructure, _ := cmd.Flags().GetBool("preserve-folder-structure")
+			generate, _ := cmd.Flags().GetInt("generate")
 
-		if list {
-			mocker := mock.New()
-			mocker.List()
-			return
-		}
-
-		if parseStr == "" && parseFrom == "" {
-			log.Fatalln("Nothing to be parsed. Ask for help -h or --help")
-		} else if parseStr != "" && parseFrom != "" {
-			log.Fatalln("Please provide only one of the two options: --parse or --parseFrom")
-		}
-
-		if parseFrom != "" && len(args) > 0 {
-			log.Fatalln("You passed multiple files to --parseFrom without quotes. Did you mean: --parseFrom \"*.template.json\"?")
-		}
-
-		if preserveFolderStructure && parseFrom == "" {
-			log.Fatalln("The --preserveFolderStructure option is only available when using --parseFrom")
-		}
-
-		if generate > 1 && parseStr == "" {
-			log.Fatalln("The --generate option is only available when using --parse")
-		}
-
-		if generate <= 0 {
-			log.Fatalln("The --generate option must be greater than 0")
-		}
-
-		// Clean previous output directory
-		if err := os.RemoveAll("out"); err != nil {
-			log.Fatalf("Failed to remove previous output directory: %v\n", err)
-		}
-
-		mpbHandler := mpb.New(
-			mpb.WithWidth(60),
-			mpb.WithOutput(os.Stdout),
-			mpb.WithAutoRefresh(),
-		)
-
-		// Parse single string object from `--parse`
-		if parseStr != "" {
-			outPath := ""
-			bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
-
-			// Parse the string object content (STEP)
-			var parseMap map[string]interface{}
-			if err := json.Unmarshal([]byte(parseStr), &parseMap); err != nil {
-				log.Fatalf("Opss..failed to parse JSON from the provided --parse <string>: %v\n", err)
+			if list {
+				mocker := mocker.New()
+				mocker.List(opts.Out)
+				return nil
 			}
-			bar.Increment()
 
-			// Process the parsed map (STEP)
-			mocker := mock.New()
-			parseMaps := make([]map[string]interface{}, generate)
-			for i := range generate {
-				cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
-				if err := processJsonMap(cpParseMap, mocker); err != nil {
-					log.Fatalln(err)
+			runningParseStr, runningParseJson, runningParseFiles := false, false, false
+
+			// Check if --parse-json, --parse-files or --parse-str is provided
+			parseCheck := 0
+			if parseStr != "" {
+				parseCheck++
+				runningParseStr = true
+			}
+			if parseJson != "" {
+				parseCheck++
+				runningParseJson = true
+			}
+			if parseFiles != "" {
+				parseCheck++
+				runningParseFiles = true
+			}
+			if parseCheck == 0 {
+				return fmt.Errorf("nothing to be parsed, ask for help -h or --help")
+			} else if parseCheck > 1 {
+				return fmt.Errorf("provide only one of the three options: --parse-json, --parse-files or --parse-str")
+			}
+
+			if runningParseFiles && len(args) > 0 {
+				return fmt.Errorf("you passed multiple files to --parse-files without quotes. Did you mean: --parse-files \"*.template.json\"?")
+			}
+
+			if preserveFolderStructure && !runningParseFiles {
+				return fmt.Errorf("--preserve-folder-structure option is only available when using --parse-files")
+			}
+
+			if generate > 1 && !runningParseJson {
+				return fmt.Errorf("--generate option is only available when using --parse-json")
+			}
+
+			if generate <= 0 {
+				return fmt.Errorf("--generate option must be greater than 0")
+			}
+
+			// Clean previous output directory
+			if err := os.RemoveAll("out"); err != nil {
+				return fmt.Errorf("failed to remove previous output directory '%w'", err)
+			}
+
+			mpbHandler := mpb.New(
+				mpb.WithWidth(60),
+				mpb.WithOutput(os.Stdout),
+				mpb.WithAutoRefresh(),
+			)
+
+			if runningParseStr {
+				// Process the string
+				mocker := mocker.New()
+				mockedStr := processStr(parseStr, mocker)
+
+				// Print the mocked string to STDOUT
+				fmt.Fprintf(opts.Out, "%s\n", mockedStr)
+			}
+
+			// Parse string json object from `--parse-json`
+			if runningParseJson {
+				outPath := ""
+				bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
+
+				// Parse the string object content (STEP)
+				var parseMap map[string]any
+				if err := json.Unmarshal([]byte(parseJson), &parseMap); err != nil {
+					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
 				}
-				parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
-			}
-			bar.Increment()
+				bar.Increment()
 
-			// Sanitize the parsed map (STEP)
-			for i := range parseMaps {
-				sanitizeJsonMap(parseMaps[i])
-			}
-			bar.Increment()
-
-			// Write the processed map to a file (STEP)
-			var mu sync.Mutex
-			createdDirs := make(map[string]bool, 1)
-			if err := toFile(false, "mocked-data.json", &outPath, "", &parseMaps, &mu, &createdDirs); err != nil {
-				log.Fatalln(err)
-			}
-			bar.Increment()
-		}
-
-		// Parse object from `--parseFrom` files
-		if parseFrom != "" {
-			foundTemplateFiles, err := findTemplateFiles(parseFrom)
-			if err != nil {
-				log.Fatalf("Failed to find template files from the provided --parseFrom %v\n", err)
-			}
-			if len(foundTemplateFiles) == 0 {
-				log.Fatalf("No template files found in the provided --parseFrom %v\n", parseFrom)
-			}
-
-			var wg sync.WaitGroup
-			var mu sync.Mutex
-			createdDirs := make(map[string]bool)
-			for _, inPath := range foundTemplateFiles {
-				wg.Add(1)
-				go func(inPath string) {
-					defer wg.Done()
-					outPath := ""
-					bar := giveMeABar(inPath, &outPath, 5, mpbHandler)
-
-					// Read the template file (STEP)
-					templateFileContent, err := os.ReadFile(inPath)
-					if err != nil {
-						log.Printf("Opss..failed to read --parseFrom <file>: %v\n", err)
-						bar.Abort(false)
-						return
+				// Process the parsed map (STEP)
+				mocker := mocker.New()
+				parseMaps := make([]map[string]any, generate)
+				for i := range generate {
+					cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
+					if err := processJsonMap(cpParseMap, mocker); err != nil {
+						return fmt.Errorf("%w", err)
 					}
-					generate, err := extractDigitInBrackets("file", inPath)
-					if err != nil {
-						log.Printf("Opss..failed to extract digit from filename: %v\n", err)
-						bar.Abort(false)
-						return
-					}
-					bar.Increment()
+					parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
+				}
+				bar.Increment()
 
-					// Parse the template file content (STEP)
-					var parseMap map[string]interface{}
-					if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
-						log.Printf("Opss..failed to parse JSON from the provided --parseFrom <file>: %v\n", err)
-						bar.Abort(false)
-						return
-					}
-					bar.Increment()
+				// Sanitize the parsed map (STEP)
+				for i := range parseMaps {
+					sanitizeJsonMap(parseMaps[i])
+				}
+				bar.Increment()
 
-					// Process the parsed map (STEP)
-					mocker := mock.New()
-					parseMaps := make([]map[string]interface{}, generate)
-					for i := range generate {
-						cpParseMap := deepcopy.Copy(parseMap).(map[string]interface{})
-						if err := processJsonMap(cpParseMap, mocker); err != nil {
-							log.Println(err)
+				// Write the processed map to a file (STEP)
+				var mu sync.Mutex
+				createdDirs := make(map[string]bool, 1)
+				if err := toFile(false, "mocked-data.json", &outPath, "", &parseMaps, &mu, &createdDirs); err != nil {
+					return fmt.Errorf("%w", err)
+				}
+				bar.Increment()
+			}
+
+			// Parse object from `--parse-files` files
+			if runningParseFiles {
+				foundTemplateFiles, err := findTemplateFiles(parseFiles)
+				if err != nil {
+					return fmt.Errorf("failed to find template files from the provided --parse-files '%w'", err)
+				}
+				if len(foundTemplateFiles) == 0 {
+					return fmt.Errorf("no template files found in the provided --parse-files '%s'", parseFiles)
+				}
+
+				var wg sync.WaitGroup
+				var mu sync.Mutex
+				createdDirs := make(map[string]bool)
+				for _, inPath := range foundTemplateFiles {
+					wg.Add(1)
+					go func(inPath string) error {
+						defer wg.Done()
+						outPath := ""
+						bar := giveMeABar(inPath, &outPath, 5, mpbHandler)
+
+						// Read the template file (STEP)
+						templateFileContent, err := os.ReadFile(inPath)
+						if err != nil {
 							bar.Abort(false)
-							return
+							return fmt.Errorf("failed to read --parse-file '%w'", err)
 						}
-						parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]interface{})
-					}
-					bar.Increment()
+						generate, err := extractDigitInBrackets("file", inPath)
+						if err != nil {
+							bar.Abort(false)
+							return fmt.Errorf("failed to extract [digit] from '%w'", err)
+						}
+						bar.Increment()
 
-					// Sanitize the parsed map (STEP)
-					for i := range parseMaps {
-						sanitizeJsonMap(parseMaps[i])
-					}
-					bar.Increment()
+						// Parse the template file content (STEP)
+						var parseMap map[string]any
+						if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
+							bar.Abort(false)
+							return fmt.Errorf("failed to parse JSON from the provided --parse-file '%w'", err)
+						}
+						bar.Increment()
 
-					// Write the processed map to a file (STEP)
-					if err := toFile(preserveFolderStructure, inPath, &outPath, parseFrom, &parseMaps, &mu, &createdDirs); err != nil {
-						log.Println(err)
-						bar.Abort(false)
-						return
-					}
-					bar.Increment()
-				}(inPath)
+						// Process the parsed map (STEP)
+						mocker := mocker.New()
+						parseMaps := make([]map[string]any, generate)
+						for i := range generate {
+							cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
+							if err := processJsonMap(cpParseMap, mocker); err != nil {
+								bar.Abort(false)
+								return fmt.Errorf("%w", err)
+							}
+							parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
+						}
+						bar.Increment()
+
+						// Sanitize the parsed map (STEP)
+						for i := range parseMaps {
+							sanitizeJsonMap(parseMaps[i])
+						}
+						bar.Increment()
+
+						// Write the processed map to a file (STEP)
+						if err := toFile(preserveFolderStructure, inPath, &outPath, parseFiles, &parseMaps, &mu, &createdDirs); err != nil {
+							bar.Abort(false)
+							return fmt.Errorf("%w", err)
+						}
+						bar.Increment()
+
+						return nil
+					}(inPath)
+				}
+				wg.Wait()
 			}
-			wg.Wait()
-		}
 
-		mpbHandler.Wait()
-	},
-}
+			mpbHandler.Wait()
 
-func init() {
+			return nil
+		},
+	}
+
 	mockCmd.Flags().Bool("list", false, "list all available mock functions")
-	mockCmd.Flags().String("parse", "", "pass a JSON object as a string. The mock data will be generated based on this provided template object")
-	mockCmd.Flags().String("parseFrom", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found files")
-	mockCmd.Flags().Bool("preserveFolderStructure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parseFrom)")
-	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse)")
+	mockCmd.Flags().String("parse-str", "", "pass a string to be parsed. The mock data will be generated based on this provided string")
+	mockCmd.Flags().String("parse-json", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
+	mockCmd.Flags().String("parse-files", "", "pass a path, directory, or glob pattern to find template files. The mock data will be generated based on the found template files")
+	mockCmd.Flags().Bool("preserve-folder-structure", false, "if set, the folder structure of the input files will be preserved in the output files (only available for --parse-file)")
+	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse-json)")
 
-	viper.BindPFlag("list", mockCmd.Flags().Lookup("list"))
-	viper.BindPFlag("parse", mockCmd.Flags().Lookup("parse"))
-	viper.BindPFlag("parseFrom", mockCmd.Flags().Lookup("parseFrom"))
-	viper.BindPFlag("preserveFolderStructure", mockCmd.Flags().Lookup("preserveFolderStructure"))
-	viper.BindPFlag("generate", mockCmd.Flags().Lookup("generate"))
+	// Configure cobra ouput streams to use the custom 'Out'
+	mockCmd.SetOut(opts.Out)
 
-	rootCmd.AddCommand(mockCmd)
+	return mockCmd
 }
 
 // Splits a raw string of format "func:arg1:arg2:...".
@@ -306,7 +376,7 @@ func interpretString(rawValue string) (string, bool) {
 // It replaces string values with generated mock data based on the function name and parameters.
 // It handles nested maps and arrays of strings or maps.
 // Returns an error if any value is not a string or map.
-func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
+func processJsonMap(parseMap map[string]any, mocker *mocker.Mock) error {
 	objKeys := make([]string, 0, len(parseMap))
 	for key := range parseMap {
 		objKeys = append(objKeys, key)
@@ -349,17 +419,17 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 				parseMap[objKey] = mockValue
 			}
 			keyIndex++
-		case map[string]interface{}:
+		case map[string]any:
 			// try to find [digit] in the "key"
 			generateAmount, err := extractDigitInBrackets("object", objKey)
 			if err != nil {
 				return err
 			}
-			// if generating multiple values, convert the map to a slice of maps (but force the type to generic interface{}) and reprocess again
+			// if generating multiple values, convert the map to a slice of maps (but force the type to generic any) and reprocess again
 			if generateAmount > 1 {
-				convertedValue := make([]interface{}, generateAmount)
+				convertedValue := make([]any, generateAmount)
 				for i := range generateAmount {
-					convertedValue[i] = deepcopy.Copy(typedValue).(interface{})
+					convertedValue[i] = deepcopy.Copy(typedValue)
 				}
 				parseMap[objKey] = convertedValue
 			} else {
@@ -368,7 +438,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 				}
 				keyIndex++
 			}
-		case []interface{}:
+		case []any:
 			for itemKey, item := range typedValue {
 				if itemStr, ok := item.(string); ok {
 					interpretedValue, isMockFunction := interpretString(itemStr)
@@ -382,18 +452,18 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 						return err
 					}
 					typedValue[itemKey] = mockValue
-				} else if itemMap, ok := item.(map[string]interface{}); ok {
+				} else if itemMap, ok := item.(map[string]any); ok {
 					err := processJsonMap(itemMap, mocker)
 					if err != nil {
 						return err
 					}
 				} else {
-					return fmt.Errorf("Value '%v' is not a string or map", item)
+					return fmt.Errorf("value '%v' is not a string or map", item)
 				}
 			}
 			keyIndex++
 		default:
-			return fmt.Errorf("Value '%v' is not a string, map or array", typedValue)
+			return fmt.Errorf("value '%v' is not a string, map or array", typedValue)
 		}
 	}
 	return nil
@@ -401,7 +471,7 @@ func processJsonMap(parseMap map[string]interface{}, mocker *mock.Mock) error {
 
 // Iterates through the parsed json map and sanitizes the keys by removing segments between bracketes (e.g. [digits]).
 // It handles nested maps.
-func sanitizeJsonMap(parseMap map[string]interface{}) {
+func sanitizeJsonMap(parseMap map[string]any) {
 	// Clone keys to avoid modifying map during iteration
 	objKeys := make([]string, 0, len(parseMap))
 	for objKey := range parseMap {
@@ -413,7 +483,7 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 		sanitizedKey := sanitizeKeyWithBrackets(objKey)
 
 		// Recurse on nested maps
-		if mapValue, ok := objValue.(map[string]interface{}); ok {
+		if mapValue, ok := objValue.(map[string]any); ok {
 			sanitizeJsonMap(mapValue)
 		}
 
@@ -422,6 +492,28 @@ func sanitizeJsonMap(parseMap map[string]interface{}) {
 			delete(parseMap, objKey)
 		}
 	}
+}
+
+// Process a simple string value, checking if it contains a mock function.
+// If it does, it generates the mock value using the mocker.
+// If not, it returns the original string.
+func processStr(parseStr string, mocker *mocker.Mock) string {
+	dBracketsPatterns := regexp.MustCompile(`{{\s*([^}]+?)\s*}}`)
+
+	all := dBracketsPatterns.ReplaceAllStringFunc(parseStr, func(match string) string {
+		interpretedValue := dBracketsPatterns.FindStringSubmatch(match)[1]
+		interpretedValue = strings.TrimSpace(interpretedValue)
+
+		functionName, params := extractMockMethod(interpretedValue)
+
+		mockValue, err := mocker.Generate(functionName, params)
+		if err != nil {
+			return fmt.Sprintf("[%v]", err)
+		}
+		return mockValue
+	})
+
+	return all
 }
 
 // Extracts a digit from a string in the format "content[<digit>]" or "content[<digit>].template.json".
@@ -433,7 +525,7 @@ func extractDigitInBrackets(place string, str string) (int, error) {
 	} else if place == "object" {
 		matches = objKeyNumberRegex.FindStringSubmatch(str)
 	} else {
-		return 0, fmt.Errorf("Invalid place value: '%s' (either 'file' or 'object')", place)
+		return 0, fmt.Errorf("invalid value '%s' (must be either 'file' or 'object')", place)
 	}
 
 	if len(matches) != 2 {
@@ -441,19 +533,19 @@ func extractDigitInBrackets(place string, str string) (int, error) {
 			return 1, nil
 		}
 		if place == "file" {
-			return 0, fmt.Errorf("Invalid format: must be 'text[digit].template.json', got: '%s'", str)
+			return 0, fmt.Errorf("invalid format '%s' (must be 'text[digit].template.json')", str)
 		} else if place == "object" {
-			return 0, fmt.Errorf("Invalid format: must be 'text[digit]', got: '%s'", str)
+			return 0, fmt.Errorf("invalid format '%s' (must be 'text[digit]')", str)
 		}
 	}
 
 	digit, err := strconv.Atoi(matches[1])
 	if err != nil {
-		return 0, fmt.Errorf("Invalid content inside brackets in: '%s'", str)
+		return 0, fmt.Errorf("invalid content inside brackets in '%s'", str)
 	}
 
 	if digit <= 0 {
-		return 0, fmt.Errorf("Invalid digit in brackets: '%s'", str)
+		return 0, fmt.Errorf("invalid digit in brackets '%s'", str)
 	}
 
 	return digit, nil
@@ -492,7 +584,7 @@ func findTemplateFiles(input string) ([]string, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("Error walking through directory %v", err)
+			return nil, fmt.Errorf("error walking through directory '%w'", err)
 		}
 		return matchedFiles, nil
 	}
@@ -500,7 +592,7 @@ func findTemplateFiles(input string) ([]string, error) {
 	// If it's not a directory, use filepath.Glob to match pattern (may include wildcard)
 	globMatches, err := filepath.Glob(input)
 	if err != nil {
-		return nil, fmt.Errorf("Error matching pattern: %v", err)
+		return nil, fmt.Errorf("error matching pattern '%w'", err)
 	}
 
 	for _, file := range globMatches {
@@ -518,8 +610,8 @@ func findTemplateFiles(input string) ([]string, error) {
 
 // Writes the generated mock data to a file.
 // It creates the directory structure if it doesn't exist.
-// If `preserveFolderStructure` is true, it keeps the original folder structure.
-func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFrom string, result *[]map[string]interface{}, mu *sync.Mutex, createdDirs *map[string]bool) error {
+// If `preserve-folder-structure` is true, it keeps the original folder structure.
+func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseFiles string, result *[]map[string]any, mu *sync.Mutex, createdDirs *map[string]bool) error {
 	var prettyJSON []byte
 	var err error
 	if len(*result) == 1 {
@@ -528,17 +620,17 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 		prettyJSON, err = json.MarshalIndent(result, "", "  ")
 	}
 	if err != nil {
-		return fmt.Errorf("Error marshalling JSON: %v", err)
+		return fmt.Errorf("error marshalling JSON '%w'", err)
 	}
 
 	if preserveFolderStructure {
-		normalizedParseFrom, err := normalizeParseFrom(parseFrom)
+		normalizedParseFrom, err := normalizeParseFrom(parseFiles)
 		if err != nil {
-			return fmt.Errorf("Failed to normalize parseFrom path: %v\n", err)
+			return fmt.Errorf("failed to normalize '--parse-file' path '%w'", err)
 		}
 		relPath, err := filepath.Rel(normalizedParseFrom, inPath)
 		if err != nil {
-			return fmt.Errorf("Failed to get relative path: %v\n", err)
+			return fmt.Errorf("failed to get relative path '%w'", err)
 		}
 		relPath = strings.Replace(relPath, ".template.json", ".json", 1)
 		*outPath = filepath.Join("out", relPath)
@@ -553,7 +645,7 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 	if !(*createdDirs)[dir] {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			mu.Unlock()
-			return fmt.Errorf("Failed to create directory '%v': %v\n", dir, err)
+			return fmt.Errorf("failed to create directory '%v', '%w'", dir, err)
 		}
 		(*createdDirs)[dir] = true
 	}
@@ -561,7 +653,7 @@ func toFile(preserveFolderStructure bool, inPath string, outPath *string, parseF
 
 	err = os.WriteFile(*outPath, prettyJSON, 0644)
 	if err != nil {
-		return fmt.Errorf("Failed to write result to '%v': %v", outPath, err)
+		return fmt.Errorf("failed to write result to '%v', '%w'", outPath, err)
 	}
 	return nil
 }
@@ -612,29 +704,14 @@ func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.P
 				if !s.Completed {
 					elapsedTime = time.Since(startElapsedTime)
 				}
-				switch {
-				case elapsedTime < time.Millisecond:
-					return fmt.Sprintf(" [%.2fµs] ", float64(elapsedTime.Microseconds()))
-				case elapsedTime < time.Second:
-					return fmt.Sprintf(" [%.2fms] ", float64(elapsedTime.Milliseconds()))
-				default:
-					return fmt.Sprintf(" [%.2fs] ", elapsedTime.Seconds())
-				}
+				return formatDurationMetrics(elapsedTime)
 			}, decor.WCSyncWidth),
 			decor.Any(func(s decor.Statistics) string {
 				info, err := os.Stat(*outPath)
 				if err != nil {
 					return " [N/A] "
 				}
-				fileSize := info.Size()
-				switch {
-				case fileSize >= GB:
-					return fmt.Sprintf(" [%.2fGB] ", float64(fileSize)/float64(GB))
-				case fileSize >= MB:
-					return fmt.Sprintf(" [%.2fMB] ", float64(fileSize)/float64(MB))
-				default:
-					return fmt.Sprintf(" [%.2fKB] ", float64(fileSize)/float64(KB))
-				}
+				return formatSizeMetrics(info.Size())
 			}, decor.WCSyncWidth),
 		),
 	)

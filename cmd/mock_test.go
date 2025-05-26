@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/lfsc09/k-test-n-stress/mock"
+	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -18,92 +18,174 @@ func TestMockCmdTestSuite(t *testing.T) {
 
 func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
 	tests := []struct {
+		testName         string
 		input            string
 		expectedFuncName string
 		expectedParams   []string
 	}{
-		{"", "", nil},
-		{"Address.city", "Address.city", []string{}},
-		{"Boolean.booleanWithChance:10", "Boolean.booleanWithChance", []string{"10"}},
-		{"Function.with:multiple:params", "Function.with", []string{"multiple", "params"}},
-		{"Regex.regex://", "Regex.regex", []string{"//"}},
-		{"Regex.regex:/[a-z0-9]{1,64}/", "Regex.regex", []string{"/[a-z0-9]{1,64}/"}},
-		{"Regex.regex:/[a-z0-9]{1,64}/:param2", "Regex.regex", []string{"/[a-z0-9]{1,64}/", "param2"}},
+		{
+			testName:         "empty string",
+			input:            "",
+			expectedFuncName: "",
+			expectedParams:   nil,
+		},
+		{
+			testName:         "simple mock function",
+			input:            "Address.city",
+			expectedFuncName: "Address.city",
+			expectedParams:   []string{},
+		},
+		{
+			testName:         "mock function with params",
+			input:            "Boolean.booleanWithChance:10",
+			expectedFuncName: "Boolean.booleanWithChance",
+			expectedParams:   []string{"10"},
+		},
+		{
+			testName:         "mock function with multiple params",
+			input:            "Function.with:multiple:params",
+			expectedFuncName: "Function.with",
+			expectedParams:   []string{"multiple", "params"},
+		},
+		{
+			testName:         "regex mock function with empty regex",
+			input:            "Regex.regex://",
+			expectedFuncName: "Regex.regex",
+			expectedParams:   []string{"//"},
+		},
+		{
+			testName:         "regular regex mock function",
+			input:            "Regex.regex:/[a-z0-9]{1,64}/",
+			expectedFuncName: "Regex.regex",
+			expectedParams:   []string{"/[a-z0-9]{1,64}/"},
+		},
+		{
+			testName:         "regex mock function with params",
+			input:            "Regex.regex:/[a-z0-9]{1,64}/:param2",
+			expectedFuncName: "Regex.regex",
+			expectedParams:   []string{"/[a-z0-9]{1,64}/", "param2"},
+		},
 	}
 
 	for _, tt := range tests {
 		funcName, params := extractMockMethod(tt.input)
-		assert.Equal(suite.T(), tt.expectedFuncName, funcName)
-		assert.Equal(suite.T(), tt.expectedParams, params)
+		assert.Equal(suite.T(), tt.expectedFuncName, funcName, "Test case '%s' failed", tt.testName)
+		assert.Equal(suite.T(), tt.expectedParams, params, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
 	tests := []struct {
+		testName       string
 		input          string
 		expectedValue  string
 		expectedIsMock bool
 	}{
-		{"", "", false},
-		{"{{Address.city}}", "Address.city", true},
-		{"{{ Address.city }}", "Address.city", true},
-		{"{{    Address.city }}", "Address.city", true},
-		{"{{ Address.city    }}", "Address.city", true},
-		{"{{     Address.city    }}", "Address.city", true},
-		{"  {{     Address.city    }}", "Address.city", true},
-		{"Address.city", "Address.city", false},
-		{"{{ Address.cit}}y", "{{ Address.cit}}y", false},
+		{
+			testName:       "empty string",
+			input:          "",
+			expectedValue:  "",
+			expectedIsMock: false,
+		},
+		{
+			testName:       "no whitespace",
+			input:          "{{Address.city}}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "regular whitespaces",
+			input:          "{{ Address.city }}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "multiple whitespaces at begining",
+			input:          "{{    Address.city }}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "multiple whitespaces at end",
+			input:          "{{ Address.city    }}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "multiple whitespaces at begining and end",
+			input:          "{{     Address.city    }}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "whitespaces before brackets",
+			input:          "  {{     Address.city    }}",
+			expectedValue:  "Address.city",
+			expectedIsMock: true,
+		},
+		{
+			testName:       "content but no brackets",
+			input:          "Address.city",
+			expectedValue:  "Address.city",
+			expectedIsMock: false,
+		},
+		{
+			testName:       "brackets in middle of content",
+			input:          "{{ Address.cit}}y",
+			expectedValue:  "{{ Address.cit}}y",
+			expectedIsMock: false,
+		},
 	}
 
 	for _, tt := range tests {
 		value, isMock := interpretString(tt.input)
-		assert.Equal(suite.T(), tt.expectedValue, value)
-		assert.Equal(suite.T(), tt.expectedIsMock, isMock)
+		assert.Equal(suite.T(), tt.expectedValue, value, "Test case '%s' failed", tt.testName)
+		assert.Equal(suite.T(), tt.expectedIsMock, isMock, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 	tests := []struct {
 		testName string
-		input    map[string]interface{}
+		input    map[string]any
 	}{
 		{
 			testName: "string value",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"key": "{{ Address.city }}",
 			},
 		},
 		{
 			testName: "string value with params",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"key": "{{ Boolean.booleanWithChance:10 }}",
 			},
 		},
 		{
 			testName: "2 string values",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"key":  "{{ Address.city }}",
 				"key2": "{{ Address.state }}",
 			},
 		},
 		{
 			testName: "string value asking for two results",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"key[2]": "{{ Address.city }}",
 			},
 		},
 		{
 			testName: "nested map",
-			input: map[string]interface{}{
-				"level": map[string]interface{}{
+			input: map[string]any{
+				"level": map[string]any{
 					"key": "{{ Address.city }}",
 				},
 			},
 		},
 		{
 			testName: "nested map with 2 values",
-			input: map[string]interface{}{
-				"level": map[string]interface{}{
+			input: map[string]any{
+				"level": map[string]any{
 					"key":  "{{ Address.city }}",
 					"key2": "{{ Address.state }}",
 				},
@@ -111,29 +193,29 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 		},
 		{
 			testName: "nested map asking for two objects",
-			input: map[string]interface{}{
-				"level[2]": map[string]interface{}{
+			input: map[string]any{
+				"level[2]": map[string]any{
 					"key": "{{ Address.city }}",
 				},
 			},
 		},
 		{
 			testName: "2 nested map on same level",
-			input: map[string]interface{}{
-				"level": map[string]interface{}{
+			input: map[string]any{
+				"level": map[string]any{
 					"key": "{{ Address.city }}",
 				},
-				"level2": map[string]interface{}{
+				"level2": map[string]any{
 					"key": "{{ Address.city }}",
 				},
 			},
 		},
 		{
 			testName: "2 nested map, one inside the other",
-			input: map[string]interface{}{
-				"level_0": map[string]interface{}{
+			input: map[string]any{
+				"level_0": map[string]any{
 					"key": "{{ Address.city }}",
-					"level_1": map[string]interface{}{
+					"level_1": map[string]any{
 						"key": "{{ Address.city }}",
 					},
 				},
@@ -141,49 +223,49 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 		},
 		{
 			testName: "arrays of 2 string values",
-			input: map[string]interface{}{
-				"array": []interface{}{"{{ Address.city }}", "{{ Person.firstName }}"},
+			input: map[string]any{
+				"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
 			},
 		},
 		{
 			testName: "2 arrays of 2 strings values",
-			input: map[string]interface{}{
-				"array":  []interface{}{"{{ Address.city }}", "{{ Person.firstName }}"},
-				"array2": []interface{}{"{{ Address.city }}", "{{ Person.firstName }}"},
+			input: map[string]any{
+				"array":  []any{"{{ Address.city }}", "{{ Person.firstName }}"},
+				"array2": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
 			},
 		},
 		{
 			testName: "nested map with array of strings inside",
-			input: map[string]interface{}{
-				"level": map[string]interface{}{
+			input: map[string]any{
+				"level": map[string]any{
 					"key":   "{{ Address.city }}",
-					"array": []interface{}{"{{ Address.city }}", "{{ Person.firstName }}"},
+					"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
 				},
 			},
 		},
 		{
 			testName: "array of nested maps",
-			input: map[string]interface{}{
-				"array": []interface{}{
-					map[string]interface{}{"key": "{{ Address.city }}"},
-					map[string]interface{}{"key": "{{ Person.firstName }}", "key2": "{{ Person.lastName }}"},
+			input: map[string]any{
+				"array": []any{
+					map[string]any{"key": "{{ Address.city }}"},
+					map[string]any{"key": "{{ Person.firstName }}", "key2": "{{ Person.lastName }}"},
 				},
 			},
 		},
 		{
 			testName: "array of nested maps with more maps and arrays inside",
-			input: map[string]interface{}{
-				"array": []interface{}{
-					map[string]interface{}{
+			input: map[string]any{
+				"array": []any{
+					map[string]any{
 						"key":   "{{ Address.city }}",
-						"array": []interface{}{"{{ Address.city }}", "{{ Person.firstName }}"},
+						"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
 					},
-					map[string]interface{}{
+					map[string]any{
 						"key":  "{{ Person.firstName }}",
 						"key2": "{{ Person.lastName }}",
-						"map": map[string]interface{}{
+						"map": map[string]any{
 							"key":   "{{ Address.city }}",
-							"array": []interface{}{"{{ Address.city }}", "{{ Person.firstName }}", map[string]interface{}{"key": "{{ Person.lastName }}"}},
+							"array": []any{"{{ Address.city }}", "{{ Person.firstName }}", map[string]any{"key": "{{ Person.lastName }}"}},
 						},
 					},
 				},
@@ -192,111 +274,277 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 	}
 
 	for _, tt := range tests {
-		mockObj := mock.New()
-		err := processJsonMap(tt.input, mockObj)
-		assert.NoError(suite.T(), err)
+		mockerObj := mocker.New()
+		err := processJsonMap(tt.input, mockerObj)
+		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
 	tests := []struct {
 		testName string
-		input    map[string]interface{}
+		input    map[string]any
 	}{
 		{
 			testName: "invalid value in map [integer value]",
-			input: map[string]interface{}{
+			input: map[string]any{
 				"key": 123,
 			},
 		},
 		{
 			testName: "invalid type in array [integer value]",
-			input: map[string]interface{}{
-				"array": []interface{}{123},
+			input: map[string]any{
+				"array": []any{123},
 			},
 		},
 	}
 
 	for _, tt := range tests {
-		mockObj := mock.New()
-		err := processJsonMap(tt.input, mockObj)
-		assert.Error(suite.T(), err)
+		mockerObj := mocker.New()
+		err := processJsonMap(tt.input, mockerObj)
+		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
 	tests := []struct {
+		testName      string
 		inputPlace    string
 		inputValue    string
 		expectedDigit int
 	}{
-		{"object", "", 1},
-		{"object", "text", 1},
-		{"object", "text[10]", 10},
-		{"file", "text.template.json", 1},
-		{"file", "text[10].template.json", 10},
+		{
+			testName:      "test 1",
+			inputPlace:    "object",
+			inputValue:    "",
+			expectedDigit: 1,
+		},
+		{
+			testName:      "test 2",
+			inputPlace:    "object",
+			inputValue:    "text",
+			expectedDigit: 1,
+		},
+		{
+			testName:      "test 3",
+			inputPlace:    "object",
+			inputValue:    "text[10]",
+			expectedDigit: 10,
+		},
+		{
+			testName:      "test 4",
+			inputPlace:    "file",
+			inputValue:    "text.template.json",
+			expectedDigit: 1,
+		},
+		{
+			testName:      "test 5",
+			inputPlace:    "file",
+			inputValue:    "text[10].template.json",
+			expectedDigit: 10,
+		},
 	}
 
 	for _, tt := range tests {
 		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
-		assert.Equal(suite.T(), tt.expectedDigit, digit)
-		assert.NoError(suite.T(), err)
+		assert.Equal(suite.T(), tt.expectedDigit, digit, "Test case '%s' failed", tt.testName)
+		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
 	tests := []struct {
+		testName      string
 		inputPlace    string
 		inputValue    string
 		expectedDigit int
 	}{
-		{"other", "text[0]", 0},
-		{"object", "text[-2]", 0},
-		{"object", "text[0]", 0},
-		{"object", "[5]text", 0},
-		{"object", "te[5]xt", 0},
-		{"object", "text10]", 0},
-		{"object", "text[]", 0},
-		{"object", "text[something]", 0},
-		{"object", "text[1a9]", 0},
-		{"object", "text[a1]", 0},
-		{"object", "text[@!]", 0},
-		{"object", "text[10][5]", 0},
-		{"object", "text[[5]]", 0},
-		{"object", "text]1[", 0},
-		{"object", "text[5 ]", 0},
-		{"object", "text[ 10]", 0},
-		{"file", "text[5]", 0},
-		{"file", "text[5].temp", 0},
-		{"file", "text[5].json", 0},
-		{"file", "[5].template.json", 0},
-		{"file", "text[5 ].template.json", 0},
-		{"file", "text [5].template.json", 0},
+		{
+			testName:      "test 1",
+			inputPlace:    "other",
+			inputValue:    "text[0]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 2",
+			inputPlace:    "object",
+			inputValue:    "text[-2]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 3",
+			inputPlace:    "object",
+			inputValue:    "text[0]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 4",
+			inputPlace:    "object",
+			inputValue:    "[5]text",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 5",
+			inputPlace:    "object",
+			inputValue:    "te[5]xt",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 6",
+			inputPlace:    "object",
+			inputValue:    "text10]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 7",
+			inputPlace:    "object",
+			inputValue:    "text[]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 8",
+			inputPlace:    "object",
+			inputValue:    "text[something]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 9",
+			inputPlace:    "object",
+			inputValue:    "text[1a9]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 10",
+			inputPlace:    "object",
+			inputValue:    "text[a1]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 11",
+			inputPlace:    "object",
+			inputValue:    "text[@!]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 12",
+			inputPlace:    "object",
+			inputValue:    "text[10][5]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 13",
+			inputPlace:    "object",
+			inputValue:    "text[[5]]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 14",
+			inputPlace:    "object",
+			inputValue:    "text]1[",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 15",
+			inputPlace:    "object",
+			inputValue:    "text[5 ]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test ",
+			inputPlace:    "object",
+			inputValue:    "text[ 10]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 16",
+			inputPlace:    "file",
+			inputValue:    "text[5]",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 17",
+			inputPlace:    "file",
+			inputValue:    "text[5].temp",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 18",
+			inputPlace:    "file",
+			inputValue:    "text[5].json",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 19",
+			inputPlace:    "file",
+			inputValue:    "[5].template.json",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 20",
+			inputPlace:    "file",
+			inputValue:    "text[5 ].template.json",
+			expectedDigit: 0,
+		},
+		{
+			testName:      "test 21",
+			inputPlace:    "file",
+			inputValue:    "text [5].template.json",
+			expectedDigit: 0,
+		},
 	}
 
 	for _, tt := range tests {
 		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
-		assert.Equal(suite.T(), tt.expectedDigit, digit)
-		assert.Error(suite.T(), err)
+		assert.Equal(suite.T(), tt.expectedDigit, digit, "Test case '%s' failed", tt.testName)
+		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
 func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 	tests := []struct {
+		testName          string
 		input             string
 		expectedSanitized string
 	}{
-		{"", ""},
-		{"text", "text"},
-		{"text[10]", "text"},
-		{"text[10].template.json", "text.template.json"},
-		{"te[5]xt", "text"},
-		{"text10]", "text10]"},
-		{"text]1[", "text]1["},
+		{
+			testName:          "test 1",
+			input:             "",
+			expectedSanitized: "",
+		},
+		{
+			testName:          "test 2",
+			input:             "text",
+			expectedSanitized: "text",
+		},
+		{
+			testName:          "test 3",
+			input:             "text[10]",
+			expectedSanitized: "text",
+		},
+		{
+			testName:          "test 4",
+			input:             "text[10].template.json",
+			expectedSanitized: "text.template.json",
+		},
+		{
+			testName:          "test 5",
+			input:             "te[5]xt",
+			expectedSanitized: "text",
+		},
+		{
+			testName:          "test 6",
+			input:             "text10]",
+			expectedSanitized: "text10]",
+		},
+		{
+			testName:          "test 7",
+			input:             "text]1[",
+			expectedSanitized: "text]1[",
+		},
 	}
 
 	for _, tt := range tests {
 		sanitized := sanitizeKeyWithBrackets(tt.input)
-		assert.Equal(suite.T(), tt.expectedSanitized, sanitized)
+		assert.Equal(suite.T(), tt.expectedSanitized, sanitized, "Test case '%s' failed", tt.testName)
 	}
 }
