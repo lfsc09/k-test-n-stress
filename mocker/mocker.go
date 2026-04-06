@@ -282,9 +282,9 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "Lorem.words":
 		words, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.jaswdrFaker.Lorem().Words(1), " "), nil
+			return strings.Join(m.jaswdrFaker.Lorem().Words(1), ""), nil
 		}
-		return strings.Join(m.jaswdrFaker.Lorem().Words(words), ""), nil
+		return strings.Join(m.jaswdrFaker.Lorem().Words(words), " "), nil
 	/*
 		NUMBER
 	*/

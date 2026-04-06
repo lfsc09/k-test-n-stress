@@ -79,7 +79,7 @@ ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number
 #### `--parse-json`
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }'
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }'
 
 # { "company": "Delvalle", "employee": { "name": "Josh Smith" } }
 ```
@@ -91,7 +91,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 {
   "company": "{{ Company.name }}",
   "employee": {
-    "name": "{{ Person.fullName }}",
+    "name": "{{ Person.name }}",
     "age": "39"
   }
 }
@@ -123,7 +123,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 {
   "company": "{{ Company.name }}",
   "employee": {
-    "name": "{{ Person.fullName }}",
+    "name": "{{ Person.name }}",
     "age": "39"
   }
 }
