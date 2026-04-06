@@ -46,7 +46,9 @@ func NewMockCmd(opts *CommandOptions) *cobra.Command {
 Mock functions:
 
 * List available mock functions with --list.
-* Always call the mock function with the format {{ functionName::arg1:arg2:... }}. (Values not wrapped in double brackets will be considered raw values)
+* Always call the mock function with the format {{ functionName::arg1:arg2:... }}. (Values not wrapped in double curly braces will be considered raw values)
+* When passing parameters to the mock functions, use comman (:) as a separator, and pass no value for parameters you want to be generated with their default behavior (e.g. {{ Person.name:: }}, {{ Number.number::1:100 }}, {{ Address.city:: }}).
+* When passing parameters to the mock functions, you can also use regex wrapped in slashes (/) to avoid splitting them by the colon. This is useful for parameters that require colons, such as date formats (e.g. {{ Date.date::/2006-01-02T15:04:05Z07:00/ }}).
 
 Controling the number of generated data:
 

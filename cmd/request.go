@@ -147,14 +147,14 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 		},
 	}
 
-	requestCmd.Flags().String("method", "GET", "the method to be used in the request (e.g. GET, POST, PUT, DELETE)")
-	requestCmd.Flags().Bool("https", false, "if set, use https instead of http")
-	requestCmd.Flags().String("url", "", "the url of the request, with added Url params (e.g. localhost:8080, localhost:8000/api/v1/users, api.com/user/{UUID.uuidv4})")
-	requestCmd.Flags().StringArray("header", []string{}, "pass a string 'header', in key:value format, to be used as the request header, (e.g. 'Authorization: Bearer {token}')")
-	requestCmd.Flags().String("data", "", "pass a JSON object as a string to be used as the request body")
-	requestCmd.Flags().StringArray("qs", []string{}, "pass a string 'query string' to be used as the request query string")
+	requestCmd.Flags().String("method", "GET", "the method to be used in the request (e.g. GET, POST, PUT, PATCH, DELETE)")
+	requestCmd.Flags().Bool("https", false, "if set, overwrite the URL to use https:// as prefix")
+	requestCmd.Flags().String("url", "", "the URL of the request, with added URL params (e.g. localhost:8080, localhost:8000/api/v1/users, api.com/user/{UUID.uuidv4})")
+	requestCmd.Flags().StringArray("header", []string{}, "pass a string, in `<key>: <value>` format, to be used header in the request, (e.g. 'Authorization: Bearer {token}')")
+	requestCmd.Flags().String("data", "", "pass a JSON string format to be used as the request body")
+	requestCmd.Flags().StringArray("qs", []string{}, "pass a string, in `<key>=<value>` format, to be used as query string in the request")
 	requestCmd.Flags().String("response-accessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
-	requestCmd.Flags().Bool("with-metrics", false, "if set, show metrics of the request")
+	requestCmd.Flags().Bool("with-metrics", false, "if set, add request metrics in the response output")
 	requestCmd.Flags().Bool("only-response-body", false, "if set, the command output will be only the response's body, nothing more")
 
 	// Configure cobra ouput streams to use the custom 'Out'
