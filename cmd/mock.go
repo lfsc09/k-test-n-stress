@@ -166,11 +166,6 @@ Examples:
 				return fmt.Errorf("--generate option must be greater than 0")
 			}
 
-			// Clean previous output directory
-			if err := os.RemoveAll("out"); err != nil {
-				return fmt.Errorf("failed to remove previous output directory '%w'", err)
-			}
-
 			mpbHandler := mpb.New(
 				mpb.WithWidth(60),
 				mpb.WithOutput(os.Stdout),
@@ -226,6 +221,11 @@ Examples:
 
 			// Parse object from `--parse-files` files
 			if runningParseFiles {
+				// Clean previous output directory
+				if err := os.RemoveAll("out"); err != nil {
+					return fmt.Errorf("failed to remove previous output directory '%w'", err)
+				}
+
 				foundTemplateFiles, err := findTemplateFiles(parseFiles)
 				if err != nil {
 					return fmt.Errorf("failed to find template files from the provided --parse-files '%w'", err)
