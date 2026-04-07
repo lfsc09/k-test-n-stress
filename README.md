@@ -478,6 +478,14 @@ Each main command file, has the functions to parse, interpret and run the sub-fl
 
 The `/mocker` folder holds the package of the mocker object that currently only uses [`github.com/jaswdr/faker/v2`](https://github.com/jaswdr/faker) for most of the mock functions. Additional `Mock functions` were added manually.
 
+### After cloning
+
+To configure the hooks for auto-bump version on commits.
+
+```bash
+make install-hooks
+```
+
 ### Execute app
 
 ```bash

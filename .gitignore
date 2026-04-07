@@ -30,6 +30,8 @@ go.work.sum
 
 # any folders that are not source code
 */
+!/.githooks/
+!/.githooks/**
 !/.github/
 !/.github/**
 !/.vscode/
