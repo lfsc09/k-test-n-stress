@@ -242,7 +242,7 @@ Examples:
 					go func(inPath string) error {
 						defer wg.Done()
 						outPath := ""
-						bar := giveMeABar(inPath, &outPath, 5, mpbHandler)
+						bar := giveMeABar(inPath, &outPath, []string{"reading", "parsing", "processing", "sanitizing", "writing"}, mpbHandler)
 
 						// Read the template file (STEP)
 						templateFileContent, err := os.ReadFile(inPath)
@@ -673,30 +673,24 @@ func normalizeParseFrom(input string) (string, error) {
 	return base, nil
 }
 
-func giveMeABar(taskName string, outPath *string, steps int64, mpbHandler *mpb.Progress) *mpb.Bar {
+func giveMeABar(taskName string, outPath *string, labels []string, mpbHandler *mpb.Progress) *mpb.Bar {
 	startElapsedTime := time.Now()
 	var elapsedTime time.Duration
-	bar := mpbHandler.AddBar(steps,
+	bar := mpbHandler.AddBar(int64(len(labels)),
 		mpb.PrependDecorators(
 			decor.Name(taskName, decor.WCSyncWidthR),
 			decor.Any(func(s decor.Statistics) string {
-				current := "unknown state"
 				if s.Aborted {
-					current = "failed"
-				} else if s.Current == steps-5 {
-					current = "reading"
-				} else if s.Current == steps-4 {
-					current = "parsing"
-				} else if s.Current == steps-3 {
-					current = "processing"
-				} else if s.Current == steps-2 {
-					current = "sanetizing"
-				} else if s.Current == steps-1 {
-					current = "writing"
-				} else if s.Completed {
-					current = "done"
+					return "   failed   "
 				}
-				return fmt.Sprintf("   %s   ", current)
+				if s.Completed {
+					return "   done   "
+				}
+				idx := int(s.Current)
+				if idx >= 0 && idx < len(labels) {
+					return fmt.Sprintf("   %s   ", labels[idx])
+				}
+				return "   ...   "
 			}, decor.WCSyncWidth),
 			decor.CountersNoUnit(" %d/%d ", decor.WCSyncWidthR),
 		),
