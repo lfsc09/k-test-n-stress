@@ -1,4 +1,4 @@
-![Go Badge](https://img.shields.io/badge/Go-1.24.1-00ADD8.svg?style=for-the-badge&logo=Go&logoColor=white)
+![Go Badge](https://img.shields.io/badge/Go-1.26.1-00ADD8.svg?style=for-the-badge&logo=Go&logoColor=white)
 
 # The project
 
@@ -631,4 +631,72 @@ go get -u ./...
 
 # Tidy: remove unused deps and add any missing ones
 go mod tidy
+```
+
+</br>
+
+## LLM Development
+
+This project uses a two-agent pipeline for LLM-assisted development. Plan files live in `.claude/plans/` and serve as the documentation trail for every feature and bug fix.
+
+### Agents
+
+| Agent | File | Responsibility |
+| -- | -- | -- |
+| `planner` | `.claude/agents/planner.md` | Reads the codebase and writes a detailed step-by-step plan to `.claude/plans/`. Does **not** write code. |
+| `developer` | `.claude/agents/developer.md` | Reads a plan file, implements every step, marks each step done, and renames the file with a `_done` suffix when finished. |
+
+### Pipeline
+
+```
+1. You describe the feature or bug to the planner
+          ↓
+2. planner reads the codebase and writes .claude/plans/<name>.md
+          ↓
+3. You review the plan (request changes if needed)
+          ↓
+4. You ask the developer to implement the plan file
+          ↓
+5. developer implements step by step, checks off each step,
+   renames file to <name>_done.md when complete
+```
+
+### Plan file naming
+
+- New features: `feature_<short_name>.md` → `feature_<short_name>_done.md`
+- Bug fixes: `bug_<short_name>.md` → `bug_<short_name>_done.md`
+
+### Examples
+
+#### Adding a new mock function
+
+```
+"Plan the addition of an Internet.email mock function"
+→ planner writes .claude/plans/feature_internet_email.md
+
+"Implement .claude/plans/feature_internet_email.md"
+→ developer implements and renames to feature_internet_email_done.md
+```
+
+#### Fixing a bug
+
+```
+"Plan a fix for the bug where --parse-files ignores --preserve-folder-structure"
+→ planner writes .claude/plans/bug_preserve_folder_structure.md
+
+"Implement .claude/plans/bug_preserve_folder_structure.md"
+→ developer implements and renames to bug_preserve_folder_structure_done.md
+```
+
+#### Requesting plan changes before implementation
+
+```
+"Plan the addition of an Internet.email mock function"
+→ planner writes .claude/plans/feature_internet_email.md
+
+"Update the plan to also include Internet.url and Internet.ipv4"
+→ planner updates the same plan file
+
+"Implement .claude/plans/feature_internet_email.md"
+→ developer implements the updated plan
 ```
