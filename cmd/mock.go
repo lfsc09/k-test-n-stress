@@ -188,17 +188,13 @@ Examples:
 
 			// Parse string json object from `--parse-json`
 			if runningParseJson {
-				outPath := ""
-				bar := giveMeABar("CLI", &outPath, 4, mpbHandler)
-
-				// Parse the string object content (STEP)
+				// Parse the string object content
 				var parseMap map[string]any
 				if err := json.Unmarshal([]byte(parseJson), &parseMap); err != nil {
 					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
 				}
-				bar.Increment()
 
-				// Process the parsed map (STEP)
+				// Process the parsed map
 				mocker := mocker.New()
 				parseMaps := make([]map[string]any, generate)
 				for i := range generate {
@@ -208,21 +204,24 @@ Examples:
 					}
 					parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
 				}
-				bar.Increment()
 
-				// Sanitize the parsed map (STEP)
+				// Sanitize the parsed map
 				for i := range parseMaps {
 					sanitizeJsonMap(parseMaps[i])
 				}
-				bar.Increment()
 
-				// Write the processed map to a file (STEP)
-				var mu sync.Mutex
-				createdDirs := make(map[string]bool, 1)
-				if err := toFile(false, "mocked-data.json", &outPath, "", &parseMaps, &mu, &createdDirs); err != nil {
-					return fmt.Errorf("%w", err)
+				// Print the result to stdout
+				var prettyJSON []byte
+				var err error
+				if generate == 1 {
+					prettyJSON, err = json.MarshalIndent(parseMaps[0], "", "  ")
+				} else {
+					prettyJSON, err = json.MarshalIndent(parseMaps, "", "  ")
 				}
-				bar.Increment()
+				if err != nil {
+					return fmt.Errorf("error marshalling JSON '%w'", err)
+				}
+				fmt.Fprintf(opts.Out, "%s\n", prettyJSON)
 			}
 
 			// Parse object from `--parse-files` files
