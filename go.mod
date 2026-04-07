@@ -1,6 +1,6 @@
 module github.com/lfsc09/k-test-n-stress
 
-go 1.24.1
+go 1.26.1
 
 require (
 	github.com/jaswdr/faker/v2 v2.3.3
