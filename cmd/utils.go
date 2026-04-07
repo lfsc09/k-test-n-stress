@@ -16,6 +16,7 @@ const (
 	gb = 1 << 30
 )
 
+// formatDurationMetrics formats a time.Duration into a human-readable string with appropriate units (µs, ms, s).
 func formatDurationMetrics(duration time.Duration) string {
 	switch {
 	case duration < time.Millisecond:
@@ -27,6 +28,7 @@ func formatDurationMetrics(duration time.Duration) string {
 	}
 }
 
+// formatSizeMetrics formats a file size in bytes into a human-readable string with appropriate units (KB, MB, GB).
 func formatSizeMetrics(size int64) string {
 	switch {
 	case size >= gb:

@@ -470,21 +470,142 @@ Would result in only the response body to be shown.
 
 # Development Details
 
-The project uses `Cobra` to read and parse the CLI flags and values.
+## Specifications
 
-The `Cobra` main commands (`mock`, `request` and `stress`) are in `/cmd` along with its tests.
+### Main Dependencies
 
-Each main command file, has the functions to parse, interpret and run the sub-flag of each command.
+- [`Cobra`](github.com/spf13/cobra): A commandder for modern Go CLI interations.
+- [`Faker/v2`](github.com/jaswdr/faker/v2): Fake data generator for Go.
+- [`Gogoren`](github.com/zach-klippenstein/goregen): Randexp for Go.
+- [`Mpb`](https://github.com/vbauerster/mpb): Multi progress bar for Go CLI applications.
+- [`Deepcopy`](github.com/mohae/deepcopy): Deepcopy things.
+- [`Testify`](github.com/stretchr/testify): Toolkit with common assertions and mocks that plays nicely with the standard library.
 
-The `/mocker` folder holds the package of the mocker object that currently only uses [`github.com/jaswdr/faker/v2`](https://github.com/jaswdr/faker) for most of the mock functions. Additional `Mock functions` were added manually.
+### Project Packages
 
-### After cloning
+#### `mocker` Package
 
-To configure the hooks for auto-bump version on commits.
+##### Purpose
+
+Provides the fake data generation engine used by the `mock` and `request` commands. It abstracts all data generation behind a single interface, keeping CLI logic decoupled from generation logic.
+
+##### Constructor
+
+```Golang
+func New() *Mock
+```
+
+Creates a Mock instance wrapping an initialized `jaswdr/faker` instance. There's no configuration — one instance per CLI invocation.
+
+##### Parameter Convention
+
+`functionParams` is always `[]string`, even for numeric parameters. Each function is responsible for parsing and applying defaults.
+
+Blank entries (`""`) mean "use default", enabling positional omission (e.g. `Number.number::18:50` in `Number.number:<decimal>:<min>:<max>` — decimals left blank).
+
+##### Dependencies
+
+| Dependency | Used for |
+| -- | -- |
+| `github.com/jaswdr/faker/v2` | ~90% of functions (addresses, persons, companies, etc.) |
+| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` |
+| `math/rand` | Custom `Company.cnpj` and `Person.cpf` digit generation |
+
+##### Custom Implementations
+
+- `Person.cpf` and `Company.cnpj`: Generate random digit sequences and compute two mathematically valid checksum digits via the modulo-11 algorithm (`calculateChecksum` in `helpers.go`).
+- `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then passes it to `goregen` to produce a matching random string.
+- `Payment.creditCardCvv`: Uses `goregen` with [0-9]{3} instead of faker.
+
+##### Adding a New Mock Function
+
+1. Add the display entry in `List()` with `tableLineData`.
+2. Add a `case` in the `Generate` switch, parsing `functionParams` as needed.
+3. If it requires a utility (e.g. checksum logic), add it to `helpers.go`.
+4. Add test coverage in `helpers_test.go`.
+
+#### `cmd` Package
+
+##### Purpose
+
+Houses all Cobra command definitions, flag parsing, input validation, and orchestration logic for every CLI subcommand. It bridges user input to the `mocker` package and the standard library's `net/http`.
+
+##### Entry Points
+
+```Golang
+// called from main.go — uses default options (os.Stdout)
+func Execute()
+
+// testable constructor
+func NewRootCmd(opts *CommandOptions) *cobra.Command
+```
+
+`CommandOptions` carries a single `Out io.Writer`, which lets tests redirect output without touching `os.Stdout`. Both `mock` and `request` subcommands receive and honor this same `opts`.
+
+##### Version Injection
+
+`Version` in `version.go` is an empty `var` set at build time via `-ldflags`:
+
+```Golang
+go build -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=x.y.z"
+```
+
+##### Subcommand Files
+
+| File | Subcommand | Responsability |
+| -- | -- | -- |
+| `root.go` | root | Wires subcommands, sets version, silences usage on error |
+| `mock.go` | `mock` | Flag validation, parse modes, file I/O, concurrency for `--parse-files` |
+| `request.go` | `request` | HTTP request construction, mock injection into URL/QS/body, response formatting |
+| `utils.go` | — | Shared `CommandOptions`, duration/size formatters |
+| `version.go` | — | Build-time version variable |
+
+##### Concurrency in `--parse-files`
+
+Each template file is processed in its own goroutine. A `sync.WaitGroup` coordinates completion. A `sync.Mutex` guards the shared `createdDirs` map used to avoid duplicate `os.MkdirAll` calls when writing output files. A `mocker.New()` instance is created per goroutine (not shared), so no locking is needed for generation.
+
+##### Testing Structure
+
+| Filename Sulfix | What should test |
+| -- | -- |
+| `_test.go` | Unit tests for internal helpers, e.g. `extractMockMethod`, `interpretString`, `processJsonMap`, etc. Uses `testify/suite` |
+| `_e2e_test.go` | End-to-end CLI tests via `NewRootCmd` with a captured `bytes.Buffer` as `Out`. Validates full flag combinations and output |
+
+##### Adding a New Subcommand
+
+1. Create `cmd/<name>.go` with a `NewXxxCmd(opts *CommandOptions) *cobra.Command` constructor.
+2. Register it in `NewRootCmd` with `rootCmd.AddCommand(NewXxxCmd(opts))`.
+3. Set `cmd.SetOut(opts.Out)` inside the constructor so output is testable.
+4. Add E2E tests in `cmd/<name>_e2e_test.go` using the `executeCommand` helper pattern from `mock_e2e_test.go`.
+
+</br>
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone git@github.com:lfsc09/k-test-n-stress.git
+cd k-test-n-stress
+```
+
+### 2. Install dependencies
+
+```bash
+go mod download
+```
+
+### 3. Configure git hooks
+
+For auto-bump version on commits.
 
 ```bash
 make install-hooks
 ```
+
+</br>
+
+## Running
 
 ### Execute app
 
@@ -496,4 +617,18 @@ go run . <command> <flags>
 
 ```bash
 go test ./...
+```
+
+</br>
+
+## Maintaining
+
+### Updating dependencies
+
+```bash
+# Download updates for all dependencies to their latest minor/patch versions
+go get -u ./...
+
+# Tidy: remove unused deps and add any missing ones
+go mod tidy
 ```

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Helper function to calculate checksum for CPF and CNPJ
+// calculateChecksum calculates checksum for CPF and CNPJ
 func calculateChecksum(digits []int, multipliers []int) int {
 	sum := 0
 	for i := range digits {
@@ -18,7 +18,7 @@ func calculateChecksum(digits []int, multipliers []int) int {
 	return 11 - remainder
 }
 
-// Extracts raw regex string from /.../ and unescapes \/ → /
+// extractRegex extracts raw regex string from /.../ and unescapes \/ → /
 func extractRegex(value string) (string, error) {
 	if !strings.HasPrefix(value, "/") || !strings.HasSuffix(value, "/") {
 		return "", fmt.Errorf("Value '%s' must be wrapped in /.../", value)

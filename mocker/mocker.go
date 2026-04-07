@@ -20,6 +20,7 @@ type Mock struct {
 	jaswdrFaker *faker.Faker
 }
 
+// New creates a new instance of Mock with an initialized jaswdrFaker.
 func New() *Mock {
 	jaswdrFaker := faker.New()
 
@@ -28,6 +29,7 @@ func New() *Mock {
 	}
 }
 
+// tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
 func tableLineDivider(colSizes []int) string {
 	var line string
 	for idx, size := range colSizes {
@@ -40,6 +42,7 @@ func tableLineDivider(colSizes []int) string {
 	return line
 }
 
+// tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
 func tableLineHeader(colSizes []int) string {
 	var line string
 	for idx, size := range colSizes {
@@ -52,6 +55,7 @@ func tableLineHeader(colSizes []int) string {
 	return line
 }
 
+// tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
 func tableLineData(colSizes []int, data []string) string {
 	var line string
 	for idx, size := range colSizes {
@@ -64,7 +68,8 @@ func tableLineData(colSizes []int, data []string) string {
 	return line
 }
 
-// fmt.Fprintf(out, "%-40s | %s\n", "Address.latitude", "Generates a random latitude")
+// List writes a formatted list of available mock functions and their descriptions to the provided io.Writer. Each function is displayed in a tabular format with its name and description.
+// e.g.: fmt.Fprintf(out, "%-40s | %s\n", "Address.latitude", "Generates a random latitude")
 func (m *Mock) List(out io.Writer) {
 	colSizes := []int{40, 60}
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
@@ -139,6 +144,7 @@ func (m *Mock) List(out io.Writer) {
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 }
 
+// Generate takes a mock function name and its parameters, and returns a generated string based on the specified mock function. It uses the jaswdrFaker library to generate various types of random data, such as addresses, booleans, car information, company details, currency information, file names, internet-related data, lorem ipsum text, numbers, payment details, person information, regex-based strings, time data, UUIDs, and user agents. If the provided mock function is not recognized or if there are issues with the parameters, it returns an error.
 func (m *Mock) Generate(mockFunction string, functionParams []string) (string, error) {
 	switch mockFunction {
 	/*
