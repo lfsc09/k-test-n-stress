@@ -39,15 +39,17 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			}
 
 			// Decide the URL prefix
-			var urlPrefix string
-			if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
-				if forceHttps {
-					urlPrefix = "https://"
-				} else {
-					urlPrefix = "http://"
+			if forceHttps {
+				if strings.HasPrefix(urlStr, "http://") {
+					urlStr = "https://" + strings.TrimPrefix(urlStr, "http://")
+				} else if !strings.HasPrefix(urlStr, "https://") {
+					urlStr = "https://" + urlStr
+				}
+			} else {
+				if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
+					urlStr = "http://" + urlStr
 				}
 			}
-			urlStr = urlPrefix + urlStr
 
 			// Mock Url params if present
 			urlStr = processStr(urlStr, mocker)
