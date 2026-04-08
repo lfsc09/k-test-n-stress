@@ -159,6 +159,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldReturnListOfMockFunctions() {
 	assert.Contains(suite.T(), stdOut, "Regex.", testName)
 	assert.Contains(suite.T(), stdOut, "Date.", testName)
 	assert.Contains(suite.T(), stdOut, "UUID.", testName)
+	assert.Contains(suite.T(), stdOut, "UUID.uuidv7", testName)
 	assert.Contains(suite.T(), stdOut, "UserAgent.", testName)
 }
 
@@ -734,5 +735,42 @@ func (suite *MockCmdE2ETestSuite) TestCLIParseStr_EdgeCases() {
 		if tt.assertSuffix != "" {
 			assert.True(suite.T(), len(stdOut) >= len(tt.assertSuffix) && stdOut[len(stdOut)-len(tt.assertSuffix):] == tt.assertSuffix, tt.testName)
 		}
+	}
+}
+
+type MockUUIDSuite struct {
+	suite.Suite
+}
+
+func TestMockUUIDSuite(t *testing.T) {
+	suite.Run(t, new(MockUUIDSuite))
+}
+
+func (suite *MockUUIDSuite) executeCommand(args ...string) (string, error) {
+	outBuf := new(bytes.Buffer)
+	opts := &cmd.CommandOptions{Out: outBuf}
+	rootCmd := cmd.NewRootCmd(opts)
+	rootCmd.SetArgs(args)
+	err := rootCmd.Execute()
+	return outBuf.String(), err
+}
+
+func (suite *MockUUIDSuite) TestUUIDv7() {
+	tests := []struct {
+		testName    string
+		template    string
+		assertRegex string
+	}{
+		{
+			testName:    "uuidv7 matches canonical UUID v7 format",
+			template:    "{{ UUID.uuidv7 }}",
+			assertRegex: `^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\n$`,
+		},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
 	}
 }

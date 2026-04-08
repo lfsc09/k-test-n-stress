@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jaswdr/faker/v2"
 	regen "github.com/zach-klippenstein/goregen"
 )
@@ -143,12 +144,13 @@ func (m *Mock) List(out io.Writer) {
 	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Date.now:/format/", "Current datetime. Default format: YYYY-MM-DDThh:mm:ss.sss"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UUID.uuidv4", "Generates a random UUID v4"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UUID.uuidv7", "Generates a random UUID v7"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UserAgent.userAgent", "Generates a random user agent"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 }
 
-// Generate takes a mock function name and its parameters, and returns a generated string based on the specified mock function. It uses the jaswdrFaker library to generate various types of random data, such as addresses, booleans, car information, company details, currency information, file names, internet-related data, lorem ipsum text, numbers, payment details, person information, regex-based strings, time data, UUIDs, and user agents. If the provided mock function is not recognized or if there are issues with the parameters, it returns an error.
+// Generate takes a mock function name and its parameters, and returns a generated string based on the specified mock function. It uses the jaswdrFaker library to generate various types of random data, such as addresses, booleans, car information, company details, currency information, file names, internet-related data, lorem ipsum text, numbers, payment details, person information, regex-based strings, time data, UUID v4 and UUID v7 values, and user agents. If the provided mock function is not recognized or if there are issues with the parameters, it returns an error.
 func (m *Mock) Generate(mockFunction string, functionParams []string) (string, error) {
 	switch mockFunction {
 	/*
@@ -497,6 +499,12 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	*/
 	case "UUID.uuidv4":
 		return m.jaswdrFaker.UUID().V4(), nil
+	case "UUID.uuidv7":
+		v7, err := uuid.NewV7()
+		if err != nil {
+			return "", fmt.Errorf("failed to generate UUID v7: %w", err)
+		}
+		return v7.String(), nil
 	/*
 		USER AGENT
 	*/
