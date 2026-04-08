@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jaswdr/faker/v2"
 	regen "github.com/zach-klippenstein/goregen"
@@ -136,7 +137,10 @@ func (m *Mock) List(out io.Writer) {
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Regex.regex:[regex]", "Generates a random string based on the regex pattern"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
-	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Time.date", "Generates a random date"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Date.date:[from]:[to]:[format]", "Random date. from/to: YYYY-MM-DD. Default format: YYYY-MM-DD"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Date.time:[from]:[to]:[format]", "Random time. from/to: hh:mm. Default format: hh:mm:ss.sss"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Date.datetime:[from]:[to]:[format]", "Random datetime. from/to: YYYY-MM-DDThh:mm. Default: YYYY-MM-DDThh:mm:ss.sss"}))
+	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"Date.now:[format]", "Current datetime. Default format: YYYY-MM-DDThh:mm:ss.sss"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 	fmt.Fprintf(out, "%s\n", tableLineData(colSizes, []string{"UUID.uuidv4", "Generates a random UUID v4"}))
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
@@ -376,10 +380,118 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		}
 		return randomRegex, nil
 	/*
-		TIME
+		DATE
 	*/
-	case "Time.date":
-		return "", nil
+	case "Date.date":
+		fromDefault := time.Now().AddDate(-5, 0, 0)
+		toDefault := time.Now().AddDate(5, 0, 0)
+		format := "YYYY-MM-DD"
+		fromTime := fromDefault
+		toTime := toDefault
+		if len(functionParams) > 0 && functionParams[0] != "" {
+			if t, err := parseDateOnly(functionParams[0]); err == nil {
+				fromTime = t
+			}
+		}
+		if len(functionParams) > 1 && functionParams[1] != "" {
+			if t, err := parseDateOnly(functionParams[1]); err == nil {
+				toTime = t
+			}
+		}
+		if len(functionParams) > 2 && functionParams[2] != "" {
+			extracted, err := extractRegex(functionParams[2])
+			if err != nil {
+				return "", err
+			}
+			format = extracted
+		}
+		delta := toTime.Unix() - fromTime.Unix()
+		if delta < 0 {
+			return "", fmt.Errorf("Date.date: 'from' must be before 'to'")
+		}
+		// Pick a random whole day within the range
+		daySeconds := int64(24 * 60 * 60)
+		days := delta / daySeconds
+		randomDay := rand.Int63n(days + 1)
+		result := fromTime.Add(time.Duration(randomDay*daySeconds) * time.Second)
+		return formatDatetime(result, format), nil
+	case "Date.time":
+		fromDefault, _ := parseTimeOnly("00:00")
+		toDefault, _ := parseTimeOnly("23:59")
+		format := "hh:mm:ss.sss"
+		fromTime := fromDefault
+		toTime := toDefault
+		if len(functionParams) > 0 && functionParams[0] != "" {
+			if t, err := parseTimeOnly(functionParams[0]); err == nil {
+				fromTime = t
+			}
+		}
+		if len(functionParams) > 1 && functionParams[1] != "" {
+			if t, err := parseTimeOnly(functionParams[1]); err == nil {
+				toTime = t
+			}
+		}
+		if len(functionParams) > 2 && functionParams[2] != "" {
+			extracted, err := extractRegex(functionParams[2])
+			if err != nil {
+				return "", err
+			}
+			format = extracted
+		}
+		fromSecs := fromTime.Hour()*3600 + fromTime.Minute()*60
+		toSecs := toTime.Hour()*3600 + toTime.Minute()*60
+		totalRange := toSecs - fromSecs + 59 // +59 to include seconds within the final minute
+		if totalRange < 0 {
+			return "", fmt.Errorf("Date.time: 'from' must be before 'to'")
+		}
+		randomSecs := rand.Intn(totalRange + 1)
+		randomMs := rand.Intn(1000)
+		h := (fromSecs + randomSecs) / 3600
+		remaining := (fromSecs + randomSecs) % 3600
+		min := remaining / 60
+		sec := remaining % 60
+		result := time.Date(0, 1, 1, h, min, sec, randomMs*1_000_000, time.UTC)
+		return formatDatetime(result, format), nil
+	case "Date.datetime":
+		fromDefault := time.Now().AddDate(-5, 0, 0)
+		toDefault := time.Now().AddDate(5, 0, 0)
+		format := "YYYY-MM-DDThh:mm:ss.sss"
+		fromTime := fromDefault
+		toTime := toDefault
+		if len(functionParams) > 0 && functionParams[0] != "" {
+			if t, err := parseDatetimeFull(functionParams[0]); err == nil {
+				fromTime = t
+			}
+		}
+		if len(functionParams) > 1 && functionParams[1] != "" {
+			if t, err := parseDatetimeFull(functionParams[1]); err == nil {
+				toTime = t
+			}
+		}
+		if len(functionParams) > 2 && functionParams[2] != "" {
+			extracted, err := extractRegex(functionParams[2])
+			if err != nil {
+				return "", err
+			}
+			format = extracted
+		}
+		deltaMs := toTime.UnixMilli() - fromTime.UnixMilli()
+		if deltaMs < 0 {
+			return "", fmt.Errorf("Date.datetime: 'from' must be before 'to'")
+		}
+		randomDelta := rand.Int63n(deltaMs + 1)
+		result := time.UnixMilli(fromTime.UnixMilli() + randomDelta)
+		return formatDatetime(result, format), nil
+	case "Date.now":
+		format := "YYYY-MM-DDThh:mm:ss.sss"
+		if len(functionParams) > 0 && functionParams[0] != "" {
+			extracted, err := extractRegex(functionParams[0])
+			if err != nil {
+				return "", err
+			}
+			format = extracted
+		}
+		return formatDatetime(time.Now(), format), nil
 	/*
 		UUID
 	*/

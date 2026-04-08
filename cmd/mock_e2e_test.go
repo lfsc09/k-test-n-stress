@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"bytes"
+	"regexp"
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/cmd"
@@ -155,7 +156,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldReturnListOfMockFunctions() {
 	assert.Contains(suite.T(), stdOut, "Payment.", testName)
 	assert.Contains(suite.T(), stdOut, "Person.", testName)
 	assert.Contains(suite.T(), stdOut, "Regex.", testName)
-	assert.Contains(suite.T(), stdOut, "Time.", testName)
+	assert.Contains(suite.T(), stdOut, "Date.", testName)
 	assert.Contains(suite.T(), stdOut, "UUID.", testName)
 	assert.Contains(suite.T(), stdOut, "UserAgent.", testName)
 }
@@ -181,5 +182,111 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldMockFromParseStr() {
 		stdOut, err := suite.executeCommand(test.input...)
 		assert.NoError(suite.T(), err, test.testName)
 		assert.Contains(suite.T(), stdOut, test.expectedValue, test.testName)
+	}
+}
+
+type MockDateSuite struct {
+	suite.Suite
+}
+
+func TestMockDateSuite(t *testing.T) {
+	suite.Run(t, new(MockDateSuite))
+}
+
+func (suite *MockDateSuite) executeCommand(args ...string) (string, error) {
+	outBuf := new(bytes.Buffer)
+	opts := &cmd.CommandOptions{Out: outBuf}
+	rootCmd := cmd.NewRootCmd(opts)
+	rootCmd.SetArgs(args)
+	err := rootCmd.Execute()
+	return outBuf.String(), err
+}
+
+func (suite *MockDateSuite) TestDateDate() {
+	tests := []struct {
+		testName    string
+		template    string
+		assertRegex string
+	}{
+		{testName: "default format", template: "{{ Date.date }}", assertRegex: `^\d{4}-\d{2}-\d{2}\n$`},
+		{testName: "YYYY format", template: "{{ Date.date:::/YYYY/ }}", assertRegex: `^\d{4}\n$`},
+		{testName: "YYYY-MM format", template: "{{ Date.date:::/YYYY-MM/ }}", assertRegex: `^\d{4}-\d{2}\n$`},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
+	}
+}
+
+func (suite *MockDateSuite) TestDateDate_Errors() {
+	tests := []struct {
+		testName         string
+		template         string
+		expectedInOutput string
+	}{
+		{testName: "from after to", template: "{{ Date.date:2030-01-01:2020-01-01: }}", expectedInOutput: "Date.date: 'from' must be before 'to'"},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Contains(suite.T(), stdOut, tt.expectedInOutput, tt.testName)
+	}
+}
+
+func (suite *MockDateSuite) TestDateTime() {
+	tests := []struct {
+		testName    string
+		template    string
+		assertRegex string
+	}{
+		{testName: "default format", template: "{{ Date.time }}", assertRegex: `^\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+		{testName: "hh:mm format", template: "{{ Date.time:::/hh:mm/ }}", assertRegex: `^\d{2}:\d{2}\n$`},
+		{testName: "hh:mm range (default format)", template: "{{ Date.time }}", assertRegex: `^\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
+	}
+}
+
+func (suite *MockDateSuite) TestDateDatetime() {
+	tests := []struct {
+		testName    string
+		template    string
+		assertRegex string
+	}{
+		{testName: "default format", template: "{{ Date.datetime }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+		{testName: "custom format", template: "{{ Date.datetime:::/DD-MM-YYYY hh:mm/ }}", assertRegex: `^\d{2}-\d{2}-\d{4} \d{2}:\d{2}\n$`},
+		{testName: "date-only from/to", template: "{{ Date.datetime:2020-01-01:2030-12-31: }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+		{testName: "date-only from/to with custom format", template: "{{ Date.datetime:2020-01-01:2030-12-31:/YYYY-MM-DD/ }}", assertRegex: `^\d{4}-\d{2}-\d{2}\n$`},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
+	}
+}
+
+func (suite *MockDateSuite) TestDateNow() {
+	tests := []struct {
+		testName    string
+		template    string
+		assertRegex string
+	}{
+		{testName: "default format", template: "{{ Date.now }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+		{testName: "YYYY-MM format", template: "{{ Date.now:/YYYY-MM/ }}", assertRegex: `^\d{4}-\d{2}\n$`},
+		{testName: "YYYY only", template: "{{ Date.now:/YYYY/ }}", assertRegex: `^\d{4}\n$`},
+	}
+
+	for _, tt := range tests {
+		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
 	}
 }

@@ -2,6 +2,7 @@ package mocker
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -121,5 +122,104 @@ func (suite *MockerUtilsInternalTestSuite) TestExtractRegex_InvalidInputs() {
 		output, err := extractRegex(tt.input)
 		assert.Empty(suite.T(), output, "Test case '%s' failed", tt.testName)
 		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+	}
+}
+
+func (suite *MockerUtilsInternalTestSuite) TestFormatDatetime() {
+	fixedTime := time.Date(2026, 4, 7, 15, 4, 5, 123000000, time.UTC)
+	tests := []struct {
+		testName       string
+		format         string
+		expectedOutput string
+	}{
+		{testName: "YYYY only", format: "YYYY", expectedOutput: "2026"},
+		{testName: "YYYY-MM-DD", format: "YYYY-MM-DD", expectedOutput: "2026-04-07"},
+		{testName: "hh:mm:ss.sss", format: "hh:mm:ss.sss", expectedOutput: "15:04:05.123"},
+		{testName: "DD - mm:ss", format: "DD - mm:ss", expectedOutput: "07 - 04:05"},
+		{testName: "YYYY-MM-DDThh:mm:ss.sss", format: "YYYY-MM-DDThh:mm:ss.sss", expectedOutput: "2026-04-07T15:04:05.123"},
+		{testName: "sss before ss no conflict", format: "ss.sss", expectedOutput: "05.123"},
+	}
+
+	for _, tt := range tests {
+		result := formatDatetime(fixedTime, tt.format)
+		assert.Equal(suite.T(), tt.expectedOutput, result, "Test case '%s' failed", tt.testName)
+	}
+}
+
+func (suite *MockerUtilsInternalTestSuite) TestParseDateOnly() {
+	tests := []struct {
+		testName    string
+		input       string
+		expectError bool
+	}{
+		{testName: "valid date", input: "2026-04-07", expectError: false},
+		{testName: "invalid string", input: "not-a-date", expectError: true},
+		{testName: "empty string", input: "", expectError: true},
+		{testName: "wrong format (datetime)", input: "2026-04-07T15:04", expectError: true},
+	}
+
+	for _, tt := range tests {
+		t, err := parseDateOnly(tt.input)
+		if tt.expectError {
+			assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+		} else {
+			assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
+			assert.Equal(suite.T(), 2026, t.Year(), "Test case '%s' failed", tt.testName)
+			assert.Equal(suite.T(), 4, int(t.Month()), "Test case '%s' failed", tt.testName)
+			assert.Equal(suite.T(), 7, t.Day(), "Test case '%s' failed", tt.testName)
+		}
+	}
+}
+
+func (suite *MockerUtilsInternalTestSuite) TestParseTimeOnly() {
+	tests := []struct {
+		testName    string
+		input       string
+		expectError bool
+	}{
+		{testName: "valid time", input: "15:04", expectError: false},
+		{testName: "invalid hour", input: "25:00", expectError: true},
+		{testName: "invalid string", input: "abc", expectError: true},
+		{testName: "empty string", input: "", expectError: true},
+	}
+
+	for _, tt := range tests {
+		t, err := parseTimeOnly(tt.input)
+		if tt.expectError {
+			assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+		} else {
+			assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
+			assert.Equal(suite.T(), 15, t.Hour(), "Test case '%s' failed", tt.testName)
+			assert.Equal(suite.T(), 4, t.Minute(), "Test case '%s' failed", tt.testName)
+		}
+	}
+}
+
+func (suite *MockerUtilsInternalTestSuite) TestParseDatetimeFull() {
+	tests := []struct {
+		testName    string
+		input       string
+		expectError bool
+	}{
+		{testName: "valid datetime", input: "2026-04-07T15:04", expectError: false},
+		{testName: "valid date-only fallback", input: "2026-04-07", expectError: false},
+		{testName: "invalid string", input: "not-valid", expectError: true},
+		{testName: "empty string", input: "", expectError: true},
+	}
+
+	for _, tt := range tests {
+		t, err := parseDatetimeFull(tt.input)
+		if tt.expectError {
+			assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+		} else {
+			assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
+			if tt.testName == "valid datetime" {
+				assert.Equal(suite.T(), 15, t.Hour(), "Test case '%s' failed", tt.testName)
+				assert.Equal(suite.T(), 4, t.Minute(), "Test case '%s' failed", tt.testName)
+			} else if tt.testName == "valid date-only fallback" {
+				assert.Equal(suite.T(), 0, t.Hour(), "Test case '%s' failed", tt.testName)
+				assert.Equal(suite.T(), 0, t.Minute(), "Test case '%s' failed", tt.testName)
+			}
+		}
 	}
 }
