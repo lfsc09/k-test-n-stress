@@ -71,7 +71,7 @@ ktns mock --list
 #### `--parse-str`
 
 ```bash
-ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old.'
+ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::{1}:{100} }} years old.'
 
 # Hello my name is John Smith, I am 40 years old.
 ```
@@ -148,13 +148,13 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 
 #### Mock functions optional parameters
 
-Some of the Mock functions accept additional parameters, and they are informed by delimiting with (colon) `:`.
+Some of the Mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
 
-> e.g.: `{{ functionName::arg1:arg2:... }}`
+> e.g.: `{{ functionName:{arg1}:{arg2}:... }}`
 
 ```json
 {
-  "words": "Loreum.words:5"
+  "words": "Loreum.words:{5}"
 }
 ```
 
@@ -164,7 +164,7 @@ When working with multiple parameters, you may leave them blank if not used. _(T
 // e.g.: `Number.number` expects 3 parameters (<decimal>:<min>:<max>)
 // In this case <decimal> is left blank, and will use its default value.
 {
-  "age": "Number.number::18:50"
+  "age": "Number.number::{18}:{50}"
 }
 ```
 
@@ -389,8 +389,8 @@ Query Strings
 ktns request
   --medhod GET
   --url https://some-api.com/person
-  --qs 'ageMin={{ Number.number:0:1:10 }}'
-  --qs 'ageMax={{ Number.number:0:50:55 }}'
+  --qs 'ageMin={{ Number.number:{0}:{1}:{10} }}'
+  --qs 'ageMax={{ Number.number:{0}:{50}:{55} }}'
 ```
 
 Request Body

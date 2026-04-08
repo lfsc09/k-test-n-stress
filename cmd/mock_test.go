@@ -37,15 +37,33 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
 		},
 		{
 			testName:         "mock function with params",
-			input:            "Boolean.booleanWithChance:10",
+			input:            "Boolean.booleanWithChance:{10}",
 			expectedFuncName: "Boolean.booleanWithChance",
 			expectedParams:   []string{"10"},
 		},
 		{
 			testName:         "mock function with multiple params",
-			input:            "Function.with:multiple:params",
+			input:            "Function.with:{multiple}:{params}",
 			expectedFuncName: "Function.with",
 			expectedParams:   []string{"multiple", "params"},
+		},
+		{
+			testName:         "value param with colon inside",
+			input:            "Date.time:{18:00}:{20:00}",
+			expectedFuncName: "Date.time",
+			expectedParams:   []string{"18:00", "20:00"},
+		},
+		{
+			testName:         "mixed value and regex params",
+			input:            "Date.time:{18:00}:{20:00}:/hh:mm/",
+			expectedFuncName: "Date.time",
+			expectedParams:   []string{"18:00", "20:00", "/hh:mm/"},
+		},
+		{
+			testName:         "empty value param",
+			input:            "Number.number:{}:{5}:{10}",
+			expectedFuncName: "Number.number",
+			expectedParams:   []string{"", "5", "10"},
 		},
 		{
 			testName:         "regex mock function with empty regex",
@@ -61,7 +79,7 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
 		},
 		{
 			testName:         "regex mock function with params",
-			input:            "Regex.regex:/[a-z0-9]{1,64}/:param2",
+			input:            "Regex.regex:/[a-z0-9]{1,64}/:{param2}",
 			expectedFuncName: "Regex.regex",
 			expectedParams:   []string{"/[a-z0-9]{1,64}/", "param2"},
 		},
@@ -158,7 +176,7 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 		{
 			testName: "string value with params",
 			input: map[string]any{
-				"key": "{{ Boolean.booleanWithChance:10 }}",
+				"key": "{{ Boolean.booleanWithChance:{10} }}",
 			},
 		},
 		{

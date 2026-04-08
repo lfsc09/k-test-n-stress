@@ -46,9 +46,10 @@ func NewMockCmd(opts *CommandOptions) *cobra.Command {
 Mock functions:
 
 * List available mock functions with --list.
-* Always call the mock function with the format {{ functionName::arg1:arg2:... }}. (Values not wrapped in double curly braces will be considered raw values)
-* When passing parameters to the mock functions, use comman (:) as a separator, and pass no value for parameters you want to be generated with their default behavior (e.g. {{ Person.name:: }}, {{ Number.number::1:100 }}, {{ Address.city:: }}).
-* When passing parameters to the mock functions, you can also use regex wrapped in slashes (/) to avoid splitting them by the colon. This is useful for parameters that require colons, such as date formats (e.g. {{ Date.date::/2006-01-02T15:04:05Z07:00/ }}).
+* Always call the mock function with the format {{ functionName:{arg1}:{arg2}:{argN} }}. (Values not wrapped in double curly braces will be considered raw values)
+* When passing parameters to the mock functions, wrap each value in curly braces ({value}) and use colon (:) outside the braces as the separator between parameters (e.g. {{ Number.number::{1}:{100} }}, {{ Date.time:{18:00}:{20:00} }}).
+* Leave a parameter empty (bare :: or {}) to use its default value (e.g. {{ Number.number:::{100} }} leaves decimals and min at their defaults).
+* For regex parameters, wrap the pattern in slashes (/pattern/) instead of curly braces (e.g. {{ Date.date:::/YYYY-MM-DD/ }}, {{ Regex.regex:/[a-z]{3}/ }}). Colons inside /…/ are never treated as delimiters.
 
 Controling the number of generated data:
 
@@ -316,8 +317,10 @@ Examples:
 	return mockCmd
 }
 
-// Splits a raw string of format "func:arg1:arg2:...".
-// It handles regex args wrapped with slashes (/.../) to avoid splitting inside them.
+// Splits a raw string of format "func:{arg1}:{arg2}:...".
+// It handles regex args wrapped with slashes (/.../) and value args wrapped with curly
+// braces ({...}) to avoid splitting inside them. The colon (:) outside both delimiters
+// acts as the separator between positional parameters.
 // Returns: function name, and slice of parameter strings.
 func extractMockMethod(rawValue string) (string, []string) {
 	if rawValue == "" {
@@ -326,29 +329,34 @@ func extractMockMethod(rawValue string) (string, []string) {
 	var parts []string
 	var buf strings.Builder
 	inRegex := false
+	inValue := false
 
 	trimmed := strings.TrimSpace(rawValue)
 
 	for _, char := range trimmed {
-		if char == '/' {
+		switch {
+		case char == '{' && !inRegex && !inValue:
+			// Open a value token — do not write the brace
+			inValue = true
+		case char == '}' && inValue:
+			// Close the value token — do not write the brace
+			inValue = false
+		case char == '/' && !inValue:
+			// Toggle regex mode; always include the slash in the buffer
 			inRegex = !inRegex
-			// Always include slash
-			buf.WriteByte(byte(char))
-			continue
-		}
-		// If ':' outside regex — treat as delimiter
-		if char == ':' && !inRegex {
+			buf.WriteRune(char)
+		case char == ':' && !inRegex && !inValue:
+			// Delimiter outside both token types — flush buffer
 			parts = append(parts, buf.String())
-			// Start building next segment
 			buf.Reset()
-			continue
+		default:
+			// All other characters, including content inside {…} or /…/
+			buf.WriteRune(char)
 		}
-		// Default: build the current token
-		buf.WriteByte(byte(char))
 	}
 
 	// Add the final piece (there's no trailing `:`)
-	if buf.Len() > 0 {
+	if buf.Len() > 0 || inValue {
 		parts = append(parts, buf.String())
 	}
 
@@ -363,11 +371,11 @@ func interpretString(rawValue string) (string, bool) {
 		return "", false
 	}
 
-	re := regexp.MustCompile(`^\s*{{\s*(.*?)\s*}}\s*$`)
+	re := regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
 	matches := re.FindStringSubmatch(rawValue)
 
 	if len(matches) > 0 {
-		return matches[1], true
+		return strings.TrimSpace(matches[1]), true
 	}
 
 	return rawValue, false
@@ -498,23 +506,49 @@ func sanitizeJsonMap(parseMap map[string]any) {
 // Process a simple string value, checking if it contains a mock function.
 // If it does, it generates the mock value using the mocker.
 // If not, it returns the original string.
+// Mock function calls are delimited by {{ and }} where }} is always the closing
+// delimiter — single } inside the content (e.g. inside {value} param tokens) is allowed.
 func processStr(parseStr string, mocker *mocker.Mock) string {
-	dBracketsPatterns := regexp.MustCompile(`{{\s*([^}]+?)\s*}}`)
+	var out strings.Builder
+	s := parseStr
+	for {
+		// Find the next opening "{{"
+		start := strings.Index(s, "{{")
+		if start == -1 {
+			out.WriteString(s)
+			break
+		}
+		// Write everything before the opening "{{"
+		out.WriteString(s[:start])
+		s = s[start+2:] // skip past "{{"
 
-	all := dBracketsPatterns.ReplaceAllStringFunc(parseStr, func(match string) string {
-		interpretedValue := dBracketsPatterns.FindStringSubmatch(match)[1]
-		interpretedValue = strings.TrimSpace(interpretedValue)
+		// Find the closing "}}" — single "}" is allowed inside
+		end := -1
+		for i := 0; i < len(s)-1; i++ {
+			if s[i] == '}' && s[i+1] == '}' {
+				end = i
+				break
+			}
+		}
+		if end == -1 {
+			// No closing "}}" found — treat the rest as literal
+			out.WriteString("{{")
+			out.WriteString(s)
+			break
+		}
 
-		functionName, params := extractMockMethod(interpretedValue)
+		inner := strings.TrimSpace(s[:end])
+		s = s[end+2:] // skip past "}}"
 
+		functionName, params := extractMockMethod(inner)
 		mockValue, err := mocker.Generate(functionName, params)
 		if err != nil {
-			return fmt.Sprintf("[%v]", err)
+			out.WriteString(fmt.Sprintf("[%v]", err))
+		} else {
+			out.WriteString(mockValue)
 		}
-		return mockValue
-	})
-
-	return all
+	}
+	return out.String()
 }
 
 // Extracts a digit from a string in the format "content[<digit>]" or "content[<digit>].template.json".

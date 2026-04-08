@@ -226,7 +226,7 @@ func (suite *MockDateSuite) TestDateDate_Errors() {
 		template         string
 		expectedInOutput string
 	}{
-		{testName: "from after to", template: "{{ Date.date:2030-01-01:2020-01-01: }}", expectedInOutput: "Date.date: 'from' must be before 'to'"},
+		{testName: "from after to", template: "{{ Date.date:{2030-01-01}:{2020-01-01}:{} }}", expectedInOutput: "Date.date: 'from' must be before 'to'"},
 	}
 
 	for _, tt := range tests {
@@ -262,8 +262,8 @@ func (suite *MockDateSuite) TestDateDatetime() {
 	}{
 		{testName: "default format", template: "{{ Date.datetime }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
 		{testName: "custom format", template: "{{ Date.datetime:::/DD-MM-YYYY hh:mm/ }}", assertRegex: `^\d{2}-\d{2}-\d{4} \d{2}:\d{2}\n$`},
-		{testName: "date-only from/to", template: "{{ Date.datetime:2020-01-01:2030-12-31: }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
-		{testName: "date-only from/to with custom format", template: "{{ Date.datetime:2020-01-01:2030-12-31:/YYYY-MM-DD/ }}", assertRegex: `^\d{4}-\d{2}-\d{2}\n$`},
+		{testName: "date-only from/to", template: "{{ Date.datetime:{2020-01-01}:{2030-12-31}:{} }}", assertRegex: `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\n$`},
+		{testName: "date-only from/to with custom format", template: "{{ Date.datetime:{2020-01-01}:{2030-12-31}:/YYYY-MM-DD/ }}", assertRegex: `^\d{4}-\d{2}-\d{2}\n$`},
 	}
 
 	for _, tt := range tests {

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(go test:*)",
-      "Bash(go fmt:*)"
+      "Bash(go fmt:*)",
+      "Bash(go vet:*)"
     ]
   }
 }
