@@ -108,8 +108,8 @@ Controling the number of generated data:
 
 Examples:
   ktns mock --parse-str '{{ Person.name }}'
-  ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old'
-  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number::1:100 }}" }'
+  ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number:{0}:{1}:{100} }} years old'
+  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number:{0}:{1}:{100} }}" }'
   ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
   ktns mock --parse-files "*.template.json"
   ktns mock --parse-files "test/templates/*.template.json"
@@ -321,15 +321,19 @@ Examples:
 // It handles regex args wrapped with slashes (/.../) and value args wrapped with curly
 // braces ({...}) to avoid splitting inside them. The colon (:) outside both delimiters
 // acts as the separator between positional parameters.
-// Returns: function name, and slice of parameter strings.
-func extractMockMethod(rawValue string) (string, []string) {
+// Returns: function name, slice of parameter strings, and an error if any parameter
+// after the function name is not wrapped in {…} or /…/.
+func extractMockMethod(rawValue string) (string, []string, error) {
 	if rawValue == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	var parts []string
 	var buf strings.Builder
 	inRegex := false
 	inValue := false
+	valueOpened := false // tracks if a {…} block was opened for the current param
+	paramCount := 0
+	inBare := false
 
 	trimmed := strings.TrimSpace(rawValue)
 
@@ -338,6 +342,7 @@ func extractMockMethod(rawValue string) (string, []string) {
 		case char == '{' && !inRegex && !inValue:
 			// Open a value token — do not write the brace
 			inValue = true
+			valueOpened = true
 		case char == '}' && inValue:
 			// Close the value token — do not write the brace
 			inValue = false
@@ -349,18 +354,38 @@ func extractMockMethod(rawValue string) (string, []string) {
 			// Delimiter outside both token types — flush buffer
 			parts = append(parts, buf.String())
 			buf.Reset()
+			paramCount++
+			// If we have passed the function name and a bare token was detected, error
+			if paramCount >= 1 && inBare {
+				return "", nil, fmt.Errorf("mock function parameter '%s' must be wrapped in {…} for a value or /…/ for a regex", parts[len(parts)-1])
+			}
+			inBare = false
+			valueOpened = false
 		default:
 			// All other characters, including content inside {…} or /…/
 			buf.WriteRune(char)
+			// Mark bare only when outside any delimiter and past the function name
+			if paramCount >= 1 && !inRegex && !inValue {
+				inBare = true
+			}
 		}
 	}
 
-	// Add the final piece (there's no trailing `:`)
-	if buf.Len() > 0 || inValue {
+	// Add the final piece (there's no trailing `:` — but a trailing `:` means the last
+	// param is an empty string that must still be included).
+	// Include when: buffer has content, a {…} block was opened, still inside a delimiter,
+	// or at least one separator colon has been seen (paramCount >= 1), which means a
+	// trailing empty param after the last colon is intentional.
+	if buf.Len() > 0 || inValue || valueOpened || paramCount >= 1 {
 		parts = append(parts, buf.String())
 	}
 
-	return parts[0], parts[1:]
+	// Check for bare token at end of input (after function name)
+	if paramCount >= 1 && inBare {
+		return "", nil, fmt.Errorf("mock function parameter '%s' must be wrapped in {…} for a value or /…/ for a regex", buf.String())
+	}
+
+	return parts[0], parts[1:], nil
 }
 
 // Interprets a string value, checking if it contains a mock function between {{ }}.
@@ -409,7 +434,10 @@ func processJsonMap(parseMap map[string]any, mocker *mocker.Mock) error {
 				continue
 			}
 			// if it's a mock function, extract the function name and parameters
-			functionName, params := extractMockMethod(interpretedValue)
+			functionName, params, err := extractMockMethod(interpretedValue)
+			if err != nil {
+				return err
+			}
 			// either generate array of values, otherwise only one value
 			if generateAmount > 1 {
 				parseMap[objKey] = make([]string, generateAmount)
@@ -455,7 +483,10 @@ func processJsonMap(parseMap map[string]any, mocker *mocker.Mock) error {
 						typedValue[itemKey] = interpretedValue
 						continue
 					}
-					functionName, params := extractMockMethod(interpretedValue)
+					functionName, params, err := extractMockMethod(interpretedValue)
+					if err != nil {
+						return err
+					}
 					mockValue, err := mocker.Generate(functionName, params)
 					if err != nil {
 						return err
@@ -540,12 +571,16 @@ func processStr(parseStr string, mocker *mocker.Mock) string {
 		inner := strings.TrimSpace(s[:end])
 		s = s[end+2:] // skip past "}}"
 
-		functionName, params := extractMockMethod(inner)
-		mockValue, err := mocker.Generate(functionName, params)
+		functionName, params, err := extractMockMethod(inner)
 		if err != nil {
 			out.WriteString(fmt.Sprintf("[%v]", err))
 		} else {
-			out.WriteString(mockValue)
+			mockValue, err := mocker.Generate(functionName, params)
+			if err != nil {
+				out.WriteString(fmt.Sprintf("[%v]", err))
+			} else {
+				out.WriteString(mockValue)
+			}
 		}
 	}
 	return out.String()

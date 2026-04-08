@@ -83,12 +83,91 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
 			expectedFuncName: "Regex.regex",
 			expectedParams:   []string{"/[a-z0-9]{1,64}/", "param2"},
 		},
+		{
+			testName:         "no params at all",
+			input:            "Address.city",
+			expectedFuncName: "Address.city",
+			expectedParams:   []string{},
+		},
+		{
+			testName:         "single empty wrapped param",
+			input:            "Number.number:{}",
+			expectedFuncName: "Number.number",
+			expectedParams:   []string{""},
+		},
+		{
+			testName:         "three params all empty wrapped",
+			input:            "Number.number:{}:{}:{}",
+			expectedFuncName: "Number.number",
+			expectedParams:   []string{"", "", ""},
+		},
+		{
+			testName:         "three params with bare colons (empty bare)",
+			input:            "Number.number:::",
+			expectedFuncName: "Number.number",
+			expectedParams:   []string{"", "", ""},
+		},
+		{
+			testName:         "single regex param",
+			input:            "Regex.regex:/[a-z]+/",
+			expectedFuncName: "Regex.regex",
+			expectedParams:   []string{"/[a-z]+/"},
+		},
+		{
+			testName:         "colon inside value param",
+			input:            "Date.time:{18:00}:{20:00}",
+			expectedFuncName: "Date.time",
+			expectedParams:   []string{"18:00", "20:00"},
+		},
+		{
+			testName:         "colon inside regex param",
+			input:            "Date.time:::/hh:mm/",
+			expectedFuncName: "Date.time",
+			expectedParams:   []string{"", "", "/hh:mm/"},
+		},
 	}
 
 	for _, tt := range tests {
-		funcName, params := extractMockMethod(tt.input)
+		funcName, params, err := extractMockMethod(tt.input)
+		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
 		assert.Equal(suite.T(), tt.expectedFuncName, funcName, "Test case '%s' failed", tt.testName)
 		assert.Equal(suite.T(), tt.expectedParams, params, "Test case '%s' failed", tt.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestExtractMockMethod_BareValueRejection() {
+	tests := []struct {
+		testName string
+		input    string
+	}{
+		{
+			testName: "bare single param",
+			input:    "Number.number:2",
+		},
+		{
+			testName: "bare first of two params",
+			input:    "Number.number:2:1",
+		},
+		{
+			testName: "bare second param, first is wrapped",
+			input:    "Number.number:{2}:1",
+		},
+		{
+			testName: "bare param after valid value",
+			input:    "Date.date::{2030-01-01}:YYYY-MM-DD",
+		},
+		{
+			testName: "bare param with spaces",
+			input:    "Number.number: 2 ",
+		},
+	}
+
+	for _, tt := range tests {
+		funcName, params, err := extractMockMethod(tt.input)
+		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+		assert.Contains(suite.T(), err.Error(), "must be wrapped in", "Test case '%s' failed", tt.testName)
+		assert.Empty(suite.T(), funcName, "Test case '%s' failed", tt.testName)
+		assert.Nil(suite.T(), params, "Test case '%s' failed", tt.testName)
 	}
 }
 
