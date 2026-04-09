@@ -2,7 +2,10 @@ package cmd_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -48,54 +51,26 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_MultipleParseFlags() {
 		input    []string
 	}{
 		{
-			testName: "both --parse-str and --parseFile",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-files", "test.json"},
+			testName: "both --parse-str and --parse-json-file",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json-file", "test.json"},
 		},
 		{
 			testName: "both --parse-str and --parse-json",
 			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '"},
 		},
 		{
-			testName: "both --parse-json and --parseFile",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-files", "test.json"},
+			testName: "both --parse-json and --parse-json-file",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-json-file", "test.json"},
 		},
 		{
-			testName: "all three --parse-str, --parse-json and --parseFile",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-files", "test.json"},
+			testName: "all three --parse-str, --parse-json and --parse-json-file",
+			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-json-file", "test.json"},
 		},
 	}
 	for _, test := range tests {
 		_, err := suite.executeCommand(test.input...)
 		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "provide only one of the three options: --parse-json, --parse-files or --parse-str", test.testName)
-	}
-}
-
-func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_InvalidUseOfParseFiles() {
-	testName := "Should raise error when multiple args in --parse-files"
-	_, err := suite.executeCommand("mock", "--parse-files", "test.json", "test2.json")
-	assert.Error(suite.T(), err, testName)
-	assert.EqualError(suite.T(), err, "you passed multiple files to --parse-files without quotes. Did you mean: --parse-files \"*.template.json\"?", testName)
-}
-
-func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_PreserveFolderStructureFlagInvalidUse() {
-	tests := []struct {
-		testName string
-		input    []string
-	}{
-		{
-			testName: "--preserve-folder-structure with --parse-str",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--preserve-folder-structure"},
-		},
-		{
-			testName: "--preserve-folder-structure with --parse-json",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--preserve-folder-structure"},
-		},
-	}
-	for _, test := range tests {
-		_, err := suite.executeCommand(test.input...)
-		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "--preserve-folder-structure option is only available when using --parse-files", test.testName)
+		assert.EqualError(suite.T(), err, "provide only one of the three options: --parse-json, --parse-json-file or --parse-str", test.testName)
 	}
 }
 
@@ -108,15 +83,11 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagInvalidUse
 			testName: "--generate with --parse-str",
 			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--generate", "5"},
 		},
-		{
-			testName: "--generate with --parse-files",
-			input:    []string{"mock", "--parse-files", "test.json", "--generate", "5"},
-		},
 	}
 	for _, test := range tests {
 		_, err := suite.executeCommand(test.input...)
 		assert.Error(suite.T(), err, test.testName)
-		assert.EqualError(suite.T(), err, "--generate option is only available when using --parse-json", test.testName)
+		assert.EqualError(suite.T(), err, "--generate option is only available when using --parse-json or --parse-json-file", test.testName)
 	}
 }
 
@@ -161,6 +132,86 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldReturnListOfMockFunctions() {
 	assert.Contains(suite.T(), stdOut, "UUID.", testName)
 	assert.Contains(suite.T(), stdOut, "UUID.uuidv7", testName)
 	assert.Contains(suite.T(), stdOut, "UserAgent.", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseJsonFileNotFound() {
+	testName := "Should raise error when --parse-json-file file is not found"
+	_, err := suite.executeCommand("mock", "--parse-json-file", "/nonexistent/path/file.template.json")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "template file not found", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile() {
+	testName := "Should parse a single .template.json file and write output alongside it"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	templateContent := `{"name": "{{ Person.name }}"}`
+	err := os.WriteFile(templatePath, []byte(templateContent), 0644)
+	assert.NoError(suite.T(), err, testName)
+
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath)
+	assert.NoError(suite.T(), err, testName)
+
+	outPath := filepath.Join(tmpDir, "employee.json")
+	_, statErr := os.Stat(outPath)
+	assert.NoError(suite.T(), statErr, testName)
+
+	outContent, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+
+	var result map[string]any
+	jsonErr := json.Unmarshal(outContent, &result)
+	assert.NoError(suite.T(), jsonErr, testName)
+	_, hasName := result["name"]
+	assert.True(suite.T(), hasName, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile_WithGenerate() {
+	testName := "Should parse a single .template.json file with --generate and produce a JSON array"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	templateContent := `{"name": "{{ Person.name }}"}`
+	err := os.WriteFile(templatePath, []byte(templateContent), 0644)
+	assert.NoError(suite.T(), err, testName)
+
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath, "--generate", "3")
+	assert.NoError(suite.T(), err, testName)
+
+	outPath := filepath.Join(tmpDir, "employee.json")
+	outContent, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+
+	var result []map[string]any
+	jsonErr := json.Unmarshal(outContent, &result)
+	assert.NoError(suite.T(), jsonErr, testName)
+	assert.Len(suite.T(), result, 3, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile_DeletesPreviousOutput() {
+	testName := "Should delete stale output file before writing new one"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	templateContent := `{"name": "{{ Person.name }}"}`
+	err := os.WriteFile(templatePath, []byte(templateContent), 0644)
+	assert.NoError(suite.T(), err, testName)
+
+	outPath := filepath.Join(tmpDir, "employee.json")
+	staleContent := `{"stale": "data"}`
+	err = os.WriteFile(outPath, []byte(staleContent), 0644)
+	assert.NoError(suite.T(), err, testName)
+
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath)
+	assert.NoError(suite.T(), err, testName)
+
+	outContent, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	assert.NotContains(suite.T(), string(outContent), "stale", testName)
+
+	var result map[string]any
+	jsonErr := json.Unmarshal(outContent, &result)
+	assert.NoError(suite.T(), jsonErr, testName)
+	_, hasName := result["name"]
+	assert.True(suite.T(), hasName, testName)
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldMockFromParseStr() {

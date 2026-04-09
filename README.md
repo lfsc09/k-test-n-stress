@@ -54,9 +54,8 @@ ktns mock --parse-str 'Name: Person.name'
 - `--list`: To list all available mock functions.
 - `--parse-str`: Pass a literal string to be parsed. The mock data will be generated based on the provided string.
 - `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
-- `--parse-files`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
-- `--preserve-folder-structure`: If set, the folder structure of the input files will be preserved in the output files, otherwise output files will be flattened. (More info [here](#preservation-of-folder-structure))
-- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse-json`). (More info [here](#generating-multiple-values))
+- `--parse-json-file`: Pass a path to a single `.template.json` file. The mock data will be generated based on this file and written alongside it.
+- `--generate`: Pass the desired amount of root objects that will be generated (available for `--parse-json` and `--parse-json-file`). (More info [here](#generating-multiple-values))
 
 ### Examples
 
@@ -84,10 +83,10 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 # { "company": "Delvalle", "employee": { "name": "Josh Smith" } }
 ```
 
-#### `--parse-files`
+#### `--parse-json-file`
 
 ```json
-// example.template.json
+// employee.template.json
 {
   "company": "{{ Company.name }}",
   "employee": {
@@ -98,15 +97,11 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 ```
 
 ```bash
-  ktns mock --parse-files example.template.json
-  # Or
-  ktns mock --parse-files "*.template.json"
-  # Or
-  ktns mock --parse-files "test/templates/*.template.json"
+ktns mock --parse-json-file employee.template.json
 ```
 
 ```json
-// out/example.template.json
+// employee.json  (written alongside the template file)
 {
   "company": "Delvalle",
   "employee": {
@@ -116,32 +111,19 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 }
 ```
 
-#### `--preserve-folder-structure`
-
-```json
-// test/templates/example.template.json
-{
-  "company": "{{ Company.name }}",
-  "employee": {
-    "name": "{{ Person.name }}",
-    "age": "39"
-  }
-}
-```
+With `--generate` to produce an array:
 
 ```bash
-  ktns mock --parse-files "test/templates" --preserve-folder-structure
+ktns mock --parse-json-file employee.template.json --generate 3
 ```
 
 ```json
-// out/test/templates/example.template.json
-{
-  "company": "Delvalle",
-  "employee": {
-    "name": "Josh Smith",
-    "age": "39"
-  }
-}
+// employee.json
+[
+  { "company": "Delvalle", "employee": { "name": "Josh Smith", "age": "39" } },
+  { "company": "Infomatics", "employee": { "name": "Jane Doe", "age": "39" } },
+  { "company": "Braindance", "employee": { "name": "Sam Lee", "age": "39" } }
+]
 ```
 
 ### More Details
@@ -172,7 +154,7 @@ When working with multiple parameters, you may leave them blank if not used. _(T
 
 ##### Root objects
 
-If parsing a json object from the command line with `--parse-json`, use the flag `--generate <number>` to generate multiple root objects.
+Use the flag `--generate <number>` with `--parse-json` or `--parse-json-file` to generate multiple root objects.
 
 ```bash
 ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10
@@ -186,36 +168,9 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10
 ]
 ```
 
-When using `--parse-files`, **specify the desired number of root objects in the template file's name**, between brackets.
-
-e.g.: A template file named `employees[5].template.json` bellow:
-
-```json
-{
-  "name": "{{ Person.name }}"
-}
-```
-
-Will produce an output file `employees[5].json` with:
-
-```json
-[
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-]
+```bash
+ktns mock --parse-json-file employees.template.json --generate 5
+# Writes employees.json with an array of 5 objects in the same directory as the template file.
 ```
 
 ##### Inner objects
@@ -296,35 +251,6 @@ The `value` of a json object key may be:
 
 > Also create dynamic array values as detailed [here](#inner-objects).
 
-#### Preservation of folder structure
-
-When using `--parse-files`, you can may have a folder structure, for instance, like this:
-
-```
-├── company.template.json
-└── assets/
-  ├── employee[10].template.json
-  └── building[2].template.json
-```
-
-If you wish to generate the fake data and preserve this structure, use the flag `--preserve-folder-structure` to have a result like:
-
-```
-└── out/
-  ├── company.json
-  └── assets/
-    ├── employee[10].json
-    └── building[2].json
-```
-
-Otherwise your result files will be flatten:
-
-```
-└── out/
-  ├── company.json
-  ├── employee[10].json
-  └── building[2].json
-```
 
 </br>
 </br>
@@ -555,14 +481,10 @@ go build -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=x.y.z"
 | File | Subcommand | Responsability |
 | -- | -- | -- |
 | `root.go` | root | Wires subcommands, sets version, silences usage on error |
-| `mock.go` | `mock` | Flag validation, parse modes, file I/O, concurrency for `--parse-files` |
+| `mock.go` | `mock` | Flag validation, parse modes, file I/O, single-threaded file I/O for `--parse-json-file` |
 | `request.go` | `request` | HTTP request construction, mock injection into URL/QS/body, response formatting |
 | `utils.go` | — | Shared `CommandOptions`, duration/size formatters |
 | `version.go` | — | Build-time version variable |
-
-##### Concurrency in `--parse-files`
-
-Each template file is processed in its own goroutine. A `sync.WaitGroup` coordinates completion. A `sync.Mutex` guards the shared `createdDirs` map used to avoid duplicate `os.MkdirAll` calls when writing output files. A `mocker.New()` instance is created per goroutine (not shared), so no locking is needed for generation.
 
 ##### Testing Structure
 

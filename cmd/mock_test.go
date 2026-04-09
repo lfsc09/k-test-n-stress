@@ -428,18 +428,6 @@ func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
 			inputValue:    "text[10]",
 			expectedDigit: 10,
 		},
-		{
-			testName:      "test 4",
-			inputPlace:    "file",
-			inputValue:    "text.template.json",
-			expectedDigit: 1,
-		},
-		{
-			testName:      "test 5",
-			inputPlace:    "file",
-			inputValue:    "text[10].template.json",
-			expectedDigit: 10,
-		},
 	}
 
 	for _, tt := range tests {
@@ -550,42 +538,6 @@ func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
 			testName:      "test ",
 			inputPlace:    "object",
 			inputValue:    "text[ 10]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 16",
-			inputPlace:    "file",
-			inputValue:    "text[5]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 17",
-			inputPlace:    "file",
-			inputValue:    "text[5].temp",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 18",
-			inputPlace:    "file",
-			inputValue:    "text[5].json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 19",
-			inputPlace:    "file",
-			inputValue:    "[5].template.json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 20",
-			inputPlace:    "file",
-			inputValue:    "text[5 ].template.json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 21",
-			inputPlace:    "file",
-			inputValue:    "text [5].template.json",
 			expectedDigit: 0,
 		},
 	}
