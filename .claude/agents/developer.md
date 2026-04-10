@@ -90,7 +90,7 @@ You always:
 
 ### Package Structure
 
-- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance. `Generate(mockFunction string, functionParams []string)` is the single entry point. `functionParams` is always `[]string`; blank strings mean "use default". `List(out io.Writer)` renders the function table.
+- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded via time + PID + atomic counter), and a pre-built `regen.Generator` for CVV. **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `functionParams` is always `[]string`; blank strings mean "use default". `List(out io.Writer)` renders the function table.
 - **`cmd/`**: All Cobra command definitions. Entry points are `Execute()` (production) and `NewRootCmd(opts *CommandOptions) *cobra.Command` (testable). `CommandOptions` carries an `Out io.Writer` — all subcommands must honor it via `cmd.SetOut(opts.Out)`.
 
 ### Key Dependencies
@@ -99,7 +99,7 @@ You always:
 | -- | -- |
 | `github.com/spf13/cobra` | CLI command structure |
 | `github.com/jaswdr/faker/v2` | ~90% of mock functions |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` |
+| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` — via per-instance `regen.Generator` backed by `m.rng` |
 | `github.com/mohae/deepcopy` | Deep-copying JSON template objects |
 | `github.com/stretchr/testify` | Test assertions and suites |
 
@@ -123,9 +123,13 @@ You always:
 3. Register in `NewRootCmd` with `rootCmd.AddCommand(NewXxxCmd(opts))`.
 4. Add E2E tests in `cmd/<name>_e2e_test.go` following the pattern in `mock_e2e_test.go`.
 
-### Concurrency Pattern (`--parse-files`)
+### Concurrency Pattern (`mock` command — worker pool)
 
-Each template file runs in its own goroutine. A `sync.WaitGroup` coordinates completion. A `sync.Mutex` guards the shared `createdDirs` map. Each goroutine creates its own `mocker.New()` — the `Mock` struct is not shared.
+`analyzeTemplate` walks the template once and returns a `SplitPoint` describing where to chunk work. If `TotalWeight < concurrencyThreshold (10_000)`, `UseSequential = true` and the existing sequential path is used (`routeOutput`).
+
+When concurrent: `runWorkerPool` creates `runtime.NumCPU()` workers, each with their own `mocker.New()`. The main goroutine dispatches `WorkUnit{startIdx, endIdx, templateSnapshot}` sub-batches onto a buffered jobs channel; workers send completed `[]map[string]any` slices to a results channel. A single writer goroutine (`streamOutput`) reads from results and streams to all active sinks without accumulating output in memory.
+
+File outputs use `atomicFileCreate` (write to temp file → `os.Rename` on success, delete on error). A `signal.NotifyContext` on `SIGINT`/`SIGTERM` cancels the shared `context.Context`, which workers and the writer check to drain cleanly. `--debug` starts a fourth display goroutine that writes live progress to stderr every 200ms using `\r` overwrite.
 
 ### Version Injection
 
@@ -139,7 +143,7 @@ You are always working from a plan file in `.claude/plans/`. Your workflow is:
 2. **Read the affected source files** listed in the plan before touching them.
 3. **Implement each step in order.** After completing a step, immediately edit the plan file and change `- [ ]` to `- [x]` for that step.
 4. **After all steps are marked done**, rename the plan file by appending `_[done]` before the `.md` extension (e.g. `202601010000_feature_internet_email.md` → `202601010000_feature_internet_email_[done].md`).
-5. **Run `go fmt ./...` and `go test ./...`** after all changes are made. If tests fail, fix the failures before marking the final step done.
+5. **Run `go fmt ./...`, `go test ./...`, and `go test -race ./...`** after all changes are made. All three must pass before marking the final step done. The race detector is mandatory for any code that touches the `mock` worker pool, `mocker.New()`, or shared state.
 6. Report back to the user with a brief summary of what was implemented and the final test result.
 
 If a step is ambiguous or blocked (e.g. a required function does not exist as described), note the issue in the plan file under a `## Blockers` section and stop — do not guess or improvise beyond the plan.

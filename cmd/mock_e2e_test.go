@@ -1113,3 +1113,116 @@ func (suite *MockUUIDSuite) TestUUIDv7() {
 		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
 	}
 }
+
+// --- Concurrent path E2E tests ---
+
+// TestCLIConcurrent_LargeGenerateAsJson verifies the worker pool produces a valid
+// JSON array with the correct number of items when --generate exceeds the
+// concurrencyThreshold.
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_LargeGenerateAsJson() {
+	testName := "concurrent: --generate 50000 produces valid JSON array of 50000 objects"
+	stdOut, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"name":"{{ Person.name }}"}`,
+		"--generate", "50000",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	var result []map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
+	assert.Len(suite.T(), result, 50000, testName)
+	for _, item := range result {
+		_, hasName := item["name"]
+		assert.True(suite.T(), hasName, testName)
+	}
+}
+
+// TestCLIConcurrent_SingleObjectShapePreserved verifies that when --generate 1 is
+// used the output is a bare JSON object (not an array), even on the sequential path.
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_SingleObjectShapePreserved() {
+	testName := "generate=1 produces a bare object, not an array"
+	stdOut, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"name":"{{ Person.name }}"}`,
+		"--generate", "1",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, testName)
+	trimmed := strings.TrimSpace(stdOut)
+	// Must NOT start with '[' — should be a plain object
+	assert.True(suite.T(), len(trimmed) > 0 && trimmed[0] == '{', testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &result), testName)
+	_, hasName := result["name"]
+	assert.True(suite.T(), hasName, testName)
+}
+
+// TestCLIConcurrent_LargeGenerateAsCsv verifies the worker pool produces valid CSV
+// with a header row and the correct number of data rows.
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_LargeGenerateAsCsv() {
+	testName := "concurrent: --generate 50000 produces valid CSV with 50000 data rows"
+	stdOut, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"name":"{{ Person.name }}"}`,
+		"--generate", "50000",
+		"--to-stdout", "as-csv",
+	)
+	assert.NoError(suite.T(), err, testName)
+	lines := strings.Split(strings.TrimSpace(stdOut), "\n")
+	// 1 header + 50000 data rows
+	assert.Len(suite.T(), lines, 50001, testName)
+	assert.Equal(suite.T(), "name", lines[0], testName)
+}
+
+// TestCLIConcurrent_LargeGenerateToJsonFile verifies atomic file writing: the final
+// file exists, contains valid JSON, and no leftover temp file remains.
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_LargeGenerateToJsonFile() {
+	testName := "concurrent: --generate 50000 --to-json-file produces valid JSON file with no temp remainder"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.json")
+
+	_, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"name":"{{ Person.name }}"}`,
+		"--generate", "50000",
+		"--to-json-file="+outPath,
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	// Final file must exist
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+
+	var result []map[string]any
+	assert.NoError(suite.T(), json.Unmarshal(data, &result), testName)
+	assert.Len(suite.T(), result, 50000, testName)
+
+	// No temp files should remain
+	entries, _ := os.ReadDir(tmpDir)
+	for _, e := range entries {
+		assert.False(suite.T(), strings.HasPrefix(e.Name(), ".ktns-tmp-"), "temp file should not remain: %s", e.Name())
+	}
+}
+
+// TestCLIConcurrent_DebugFlagSucceeds verifies that --debug does not corrupt stdout
+// output and the command still succeeds.
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_DebugFlagSucceeds() {
+	testName := "concurrent: --debug flag succeeds and stdout contains only valid JSON"
+	stdOut, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"name":"{{ Person.name }}"}`,
+		"--generate", "50000",
+		"--to-stdout", "as-json",
+		"--debug",
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	// opts.Out should contain only JSON — no debug lines (debug writes to stderr)
+	trimmed := strings.TrimSpace(stdOut)
+	assert.False(suite.T(), strings.Contains(trimmed, "[debug]"), testName)
+
+	var result []map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &result), testName)
+	assert.Len(suite.T(), result, 50000, testName)
+}

@@ -59,6 +59,8 @@ ktns mock --parse-str 'Name: Person.name'
 - `--to-stdout <as-json|as-csv>`: Output the result to stdout as a JSON object/array or as a CSV table. Must be used with `--parse-json` or `--parse-json-file`. Use `--to-stdout-prettify` to format for readability. Note: CSV output works best with flat (one-level-deep) JSON objects; nested objects and arrays are serialised using their Go string representation.
 - `--to-stdout-prettify`: Prettify the stdout output (indented JSON or padded-column CSV). Only valid with `--to-stdout`.
 - `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` beside the binary (for `--parse-json`) or to the template name without `.template` in the same directory (for `--parse-json-file`). If a filename is given using `--to-json-file=myfile.json`, it is used as-is. Can be combined with `--to-stdout`.
+- `--to-csv-file [filename]`: Write the result as CSV to a file. Same filename-resolution rules as `--to-json-file` (default `output.csv` for `--parse-json`, template name for `--parse-json-file`). Can be combined with `--to-stdout` and `--to-json-file`. Note: CSV output works best with flat (one-level-deep) JSON objects.
+- `--debug`: Print a live generation-progress line to stderr during large runs (workers, memory estimate, throughput, elapsed time). Writes to stderr only — stdout/file output is unaffected. Opt-in; default `false`.
 
 ### Examples
 
@@ -478,7 +480,7 @@ Provides the fake data generation engine used by the `mock` and `request` comman
 func New() *Mock
 ```
 
-Creates a Mock instance wrapping an initialized `jaswdr/faker` instance. There's no configuration — one instance per CLI invocation.
+Creates a `Mock` instance wrapping an initialized `jaswdr/faker` instance. Each instance gets its own `*rand.Rand` source seeded from the current time, PID, and an atomic counter — guaranteeing unique seeds even when many goroutines call `New()` simultaneously. Instances are **not** goroutine-safe; each goroutine must create its own via `mocker.New()`.
 
 ##### Parameter Convention
 
@@ -491,14 +493,14 @@ Blank entries (`""`) mean "use default", enabling positional omission (e.g. `Num
 | Dependency | Used for |
 | -- | -- |
 | `github.com/jaswdr/faker/v2` | ~90% of functions (addresses, persons, companies, etc.) |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` |
-| `math/rand` | Custom `Company.cnpj` and `Person.cpf` digit generation |
+| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` (via per-instance generator) |
+| `math/rand` | Per-instance `*rand.Rand` in `Mock` — used by `Company.cnpj`, `Person.cpf`, and as the RNG source for goregen generators |
 
 ##### Custom Implementations
 
-- `Person.cpf` and `Company.cnpj`: Generate random digit sequences and compute two mathematically valid checksum digits via the modulo-11 algorithm (`calculateChecksum` in `helpers.go`).
-- `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then passes it to `goregen` to produce a matching random string.
-- `Payment.creditCardCvv`: Uses `goregen` with [0-9]{3} instead of faker.
+- `Person.cpf` and `Company.cnpj`: Generate random digit sequences using the instance's own `*rand.Rand` and compute two mathematically valid checksum digits via the modulo-11 algorithm (`calculateChecksum` in `helpers.go`).
+- `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then calls `regen.NewGenerator` with the instance's `*rand.Rand` as the RNG source to produce a matching random string.
+- `Payment.creditCardCvv`: Uses a `regen.Generator` (created at `mocker.New()` time, stored on the instance) backed by the instance's `*rand.Rand` to produce a 3-digit string — no global random source is touched.
 
 ##### Adding a New Mock Function
 
@@ -538,7 +540,7 @@ go build -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=x.y.z"
 | File | Subcommand | Responsability |
 | -- | -- | -- |
 | `root.go` | root | Wires subcommands, sets version, silences usage on error |
-| `mock.go` | `mock` | Flag validation, parse modes, file I/O, single-threaded file I/O for `--parse-json-file` |
+| `mock.go` | `mock` | Flag validation, parse modes, streaming file I/O, bounded worker-pool concurrency for large generation counts |
 | `request.go` | `request` | HTTP request construction, mock injection into URL/QS/body, response formatting |
 | `utils.go` | — | Shared `CommandOptions`, duration/size formatters |
 | `version.go` | — | Build-time version variable |
@@ -596,6 +598,14 @@ go run . <command> <flags>
 
 ```bash
 go test ./...
+```
+
+Run with the race detector (required for all concurrent code):
+
+```bash
+go test -race ./...
+# or via Makefile
+make test-race
 ```
 
 </br>

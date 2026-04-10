@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,16 +20,31 @@ type Mocker interface {
 	Generate(mockFunction string, functionParams []string) (string, error)
 }
 
+// mockerSeedCounter provides monotonically-increasing offsets so concurrent
+// New() calls never collide on the same UnixNano value.
+var mockerSeedCounter atomic.Int64
+
 type Mock struct {
 	jaswdrFaker *faker.Faker
+	rng         *rand.Rand // per-instance source; never share across goroutines
+	cvvGen      regen.Generator
 }
 
-// New creates a new instance of Mock with an initialized jaswdrFaker.
+// New creates a new instance of Mock with an initialized jaswdrFaker and a
+// per-instance RNG seeded with a unique value derived from the current time,
+// the PID, and an atomic counter so concurrent calls cannot share a seed.
 func New() *Mock {
 	jaswdrFaker := faker.New()
+	// Fibonacci hashing multiplier (signed): ensures unique seeds across concurrent New() calls
+	seed := time.Now().UnixNano() ^ (int64(os.Getpid()) * 0x517cc1b727220a95) ^ (mockerSeedCounter.Add(1) * -7046029254386353131)
+	rng := rand.New(rand.NewSource(seed))
+
+	cvvGen, _ := regen.NewGenerator("[0-9]{3}", &regen.GeneratorArgs{RngSource: rng})
 
 	return &Mock{
 		jaswdrFaker: &jaswdrFaker,
+		rng:         rng,
+		cvvGen:      cvvGen,
 	}
 }
 
@@ -210,7 +227,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 
 		// Generate the first 12 random digits
 		for i := range 12 {
-			cnpj[i] = rand.Intn(10)
+			cnpj[i] = m.rng.Intn(10)
 		}
 
 		// Multipliers for checksum digits
@@ -324,11 +341,14 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "Payment.creditCardType":
 		return m.jaswdrFaker.Payment().CreditCardType(), nil
 	case "Payment.creditCardCvv":
-		cvv, err := regen.Generate("[0-9]{3}")
-		if err != nil {
-			return "", fmt.Errorf("failed to generate CVV '%w'", err)
+		if m.cvvGen == nil {
+			var err error
+			m.cvvGen, err = regen.NewGenerator("[0-9]{3}", &regen.GeneratorArgs{RngSource: m.rng})
+			if err != nil {
+				return "", fmt.Errorf("failed to build CVV generator: %w", err)
+			}
 		}
-		return cvv, nil
+		return m.cvvGen.Generate(), nil
 	/*
 		PERSON
 	*/
@@ -347,7 +367,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 
 		// Generate the first 9 random digits
 		for i := range 9 {
-			cpf[i] = rand.Intn(10)
+			cpf[i] = m.rng.Intn(10)
 		}
 
 		// Multipliers for checksum digits
@@ -376,11 +396,11 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if err != nil {
 			return "", err
 		}
-		randomRegex, err := regen.Generate(regex)
+		gen, err := regen.NewGenerator(regex, &regen.GeneratorArgs{RngSource: m.rng})
 		if err != nil {
 			return "", fmt.Errorf("failed to generate regex '%w'", err)
 		}
-		return randomRegex, nil
+		return gen.Generate(), nil
 	/*
 		DATE
 	*/
@@ -414,7 +434,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		// Pick a random whole day within the range
 		daySeconds := int64(24 * 60 * 60)
 		days := delta / daySeconds
-		randomDay := rand.Int63n(days + 1)
+		randomDay := m.rng.Int63n(days + 1)
 		result := fromTime.Add(time.Duration(randomDay*daySeconds) * time.Second)
 		return formatDatetime(result, format), nil
 	case "Date.time":
@@ -446,8 +466,8 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if totalRange < 0 {
 			return "", fmt.Errorf("Date.time: 'from' must be before 'to'")
 		}
-		randomSecs := rand.Intn(totalRange + 1)
-		randomMs := rand.Intn(1000)
+		randomSecs := m.rng.Intn(totalRange + 1)
+		randomMs := m.rng.Intn(1000)
 		h := (fromSecs + randomSecs) / 3600
 		remaining := (fromSecs + randomSecs) % 3600
 		min := remaining / 60
@@ -481,7 +501,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if deltaMs < 0 {
 			return "", fmt.Errorf("Date.datetime: 'from' must be before 'to'")
 		}
-		randomDelta := rand.Int63n(deltaMs + 1)
+		randomDelta := m.rng.Int63n(deltaMs + 1)
 		result := time.UnixMilli(fromTime.UnixMilli() + randomDelta)
 		return formatDatetime(result, format), nil
 	case "Date.now":

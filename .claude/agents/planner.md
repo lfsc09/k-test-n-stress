@@ -61,7 +61,7 @@ If the user specifies a name, append it after the datetime prefix.
 
 ### Package Structure
 
-- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance. `Generate(mockFunction string, functionParams []string)` is the single entry point — all mock functions route through here. `List(out io.Writer)` renders the available functions table using `tableLineData`.
+- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded), and a pre-built `regen.Generator` for CVV generation. **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `List(out io.Writer)` renders the available functions table using `tableLineData`.
 - **`cmd/`**: All Cobra command definitions. Entry points are `Execute()` (production) and `NewRootCmd(opts *CommandOptions) *cobra.Command` (testable). `CommandOptions` carries an `Out io.Writer` — all subcommands must honor it via `cmd.SetOut(opts.Out)`.
 
 ### Key Dependencies
@@ -70,7 +70,7 @@ If the user specifies a name, append it after the datetime prefix.
 | -- | -- |
 | `github.com/spf13/cobra` | CLI command structure |
 | `github.com/jaswdr/faker/v2` | ~90% of mock functions |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` |
+| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` — via per-instance `regen.Generator` backed by `m.rng` |
 | `github.com/mohae/deepcopy` | Deep-copying JSON template objects |
 | `github.com/stretchr/testify` | Test assertions and suites |
 
@@ -86,6 +86,6 @@ If the user specifies a name, append it after the datetime prefix.
 
 **Adding a subcommand**: (1) `cmd/<name>.go` with `NewXxxCmd(opts *CommandOptions)`, (2) `cmd.SetOut(opts.Out)` inside constructor, (3) register in `NewRootCmd`, (4) E2E tests in `cmd/<name>_e2e_test.go`.
 
-**Concurrency (`--parse-files`)**: goroutine per file, `sync.WaitGroup` for coordination, `sync.Mutex` for `createdDirs` map, one `mocker.New()` per goroutine.
+**Concurrency (`mock` command)**: bounded worker pool in `cmd/mock.go`. `analyzeTemplate` determines the split point and whether to use the sequential path (below `concurrencyThreshold = 10_000` items). `runWorkerPool` dispatches `WorkUnit` sub-batches to `runtime.NumCPU()` workers via a buffered jobs channel; each worker owns its own `mocker.New()`. A single writer goroutine reads from the results channel and streams output. `routeOutput` handles the sequential path; `streamOutput` handles the concurrent path. Files are written atomically via `atomicFileCreate` (temp → rename). OS signals (`SIGINT`/`SIGTERM`) cancel the shared `context.Context`. `--debug` enables a live progress display on stderr.
 
 **`functionParams` convention**: always `[]string`; blank string `""` means "use default". Callers pass positional params; functions parse and apply defaults themselves.

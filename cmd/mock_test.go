@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/mocker"
@@ -549,6 +551,121 @@ func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
 	}
 }
 
+func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
+	tests := []struct {
+		testName      string
+		parseMap      map[string]any
+		generate      int
+		numWorkers    int
+		wantSeq       bool
+		wantCount     int
+		wantDepth     int
+		wantMinWeight int64 // TotalWeight must be >= this value when wantSeq==false
+	}{
+		{
+			testName:      "flat template generate=1 is sequential",
+			parseMap:      map[string]any{"name": "{{ Person.name }}"},
+			generate:      1,
+			numWorkers:    8,
+			wantSeq:       true,
+			wantCount:     1,
+			wantDepth:     0,
+			wantMinWeight: 1,
+		},
+		{
+			testName:      "flat template generate=50000 is concurrent",
+			parseMap:      map[string]any{"name": "{{ Person.name }}"},
+			generate:      50000,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     50000,
+			wantDepth:     0,
+			wantMinWeight: 50000,
+		},
+		{
+			testName: "inner bracket key n=100000 qualifies, falls back to root split",
+			parseMap: map[string]any{
+				"employees[100000]": map[string]any{"name": "{{ Person.name }}"},
+			},
+			generate:      1,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     1, // root split count = generate
+			wantDepth:     0,
+			wantMinWeight: 100000, // innerWeight includes the [n] key
+		},
+		{
+			testName: "nested n keys at different depths — first qualifying chosen, falls back to root",
+			parseMap: map[string]any{
+				"outer[20000]": map[string]any{
+					"inner[5000]": map[string]any{"name": "{{ Person.name }}"},
+				},
+			},
+			generate:      1,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     1,
+			wantDepth:     0,
+			wantMinWeight: 20000 * 5000, // product of both
+		},
+		{
+			testName: "sibling n keys at same depth — both counted in innerWeight",
+			parseMap: map[string]any{
+				"truck[10000]": map[string]any{"model": "{{ Car.model }}"},
+				"car[10000]":   map[string]any{"model": "{{ Car.model }}"},
+			},
+			generate:      1,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     1,
+			wantDepth:     0,
+			wantMinWeight: 10000 * 10000,
+		},
+		{
+			testName: "all n nodes below numWorkers threshold — sequential via totalWeight",
+			parseMap: map[string]any{
+				"company[3]": map[string]any{"name": "{{ Company.name }}"},
+			},
+			generate:      1,
+			numWorkers:    8,
+			wantSeq:       true,
+			wantCount:     1,
+			wantDepth:     0,
+			wantMinWeight: 1,
+		},
+		{
+			testName:      "totalWeight just below threshold (9999) is sequential",
+			parseMap:      map[string]any{"name": "{{ Person.name }}"},
+			generate:      9999,
+			numWorkers:    8,
+			wantSeq:       true,
+			wantCount:     9999,
+			wantDepth:     0,
+			wantMinWeight: 9999,
+		},
+		{
+			testName:      "totalWeight at threshold (10000) is concurrent",
+			parseMap:      map[string]any{"name": "{{ Person.name }}"},
+			generate:      10000,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     10000,
+			wantDepth:     0,
+			wantMinWeight: 10000,
+		},
+	}
+
+	for _, tt := range tests {
+		sp := analyzeTemplate(tt.parseMap, tt.generate, tt.numWorkers)
+		assert.Equal(suite.T(), tt.wantSeq, sp.UseSequential, "Test case '%s': UseSequential", tt.testName)
+		assert.Equal(suite.T(), tt.wantCount, sp.Count, "Test case '%s': Count", tt.testName)
+		assert.Equal(suite.T(), tt.wantDepth, sp.Depth, "Test case '%s': Depth", tt.testName)
+		if !tt.wantSeq {
+			assert.GreaterOrEqual(suite.T(), sp.TotalWeight, tt.wantMinWeight, "Test case '%s': TotalWeight", tt.testName)
+		}
+	}
+}
+
 func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 	tests := []struct {
 		testName          string
@@ -596,4 +713,160 @@ func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 		sanitized := sanitizeKeyWithBrackets(tt.input)
 		assert.Equal(suite.T(), tt.expectedSanitized, sanitized, "Test case '%s' failed", tt.testName)
 	}
+}
+
+func (suite *MockCmdTestSuite) TestResolveOutputPaths() {
+	tests := []struct {
+		testName         string
+		toJsonFileSet    bool
+		toJsonFileValue  string
+		toCsvFileSet     bool
+		toCsvFileValue   string
+		source           string
+		defaultFilePath  string
+		defaultCsvPath   string
+		wantJsonNotEmpty bool
+		wantCsvNotEmpty  bool
+		wantError        bool
+	}{
+		{
+			testName:         "neither flag set returns empty paths",
+			toJsonFileSet:    false,
+			toCsvFileSet:     false,
+			source:           "parse-json",
+			wantJsonNotEmpty: false,
+			wantCsvNotEmpty:  false,
+		},
+		{
+			testName:         "explicit JSON path",
+			toJsonFileSet:    true,
+			toJsonFileValue:  "mydata.json",
+			toCsvFileSet:     false,
+			source:           "parse-json",
+			wantJsonNotEmpty: true,
+			wantCsvNotEmpty:  false,
+		},
+		{
+			testName:         "explicit CSV path",
+			toJsonFileSet:    false,
+			toCsvFileSet:     true,
+			toCsvFileValue:   "mydata.csv",
+			source:           "parse-json",
+			wantJsonNotEmpty: false,
+			wantCsvNotEmpty:  true,
+		},
+		{
+			testName:         "parse-json-file source uses defaults",
+			toJsonFileSet:    true,
+			toJsonFileValue:  "_use_default_",
+			toCsvFileSet:     true,
+			toCsvFileValue:   "_use_default_",
+			source:           "parse-json-file",
+			defaultFilePath:  "/tmp/output.json",
+			defaultCsvPath:   "/tmp/output.csv",
+			wantJsonNotEmpty: true,
+			wantCsvNotEmpty:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		jsonPath, csvPath, err := resolveOutputPaths(
+			tt.toJsonFileSet, tt.toJsonFileValue,
+			tt.toCsvFileSet, tt.toCsvFileValue,
+			tt.source, tt.defaultFilePath, tt.defaultCsvPath,
+		)
+		if tt.wantError {
+			assert.Error(suite.T(), err, "Test case '%s'", tt.testName)
+		} else {
+			assert.NoError(suite.T(), err, "Test case '%s'", tt.testName)
+		}
+		if tt.wantJsonNotEmpty {
+			assert.NotEmpty(suite.T(), jsonPath, "Test case '%s': jsonPath", tt.testName)
+		} else {
+			assert.Empty(suite.T(), jsonPath, "Test case '%s': jsonPath", tt.testName)
+		}
+		if tt.wantCsvNotEmpty {
+			assert.NotEmpty(suite.T(), csvPath, "Test case '%s': csvPath", tt.testName)
+		} else {
+			assert.Empty(suite.T(), csvPath, "Test case '%s': csvPath", tt.testName)
+		}
+	}
+}
+
+func (suite *MockCmdTestSuite) TestExtractCsvHeaders() {
+	tests := []struct {
+		testName string
+		template map[string]any
+		want     []string
+	}{
+		{
+			testName: "flat template returns sorted keys",
+			template: map[string]any{
+				"name":  "{{ Person.name }}",
+				"email": "{{ Internet.email }}",
+				"age":   "{{ Number.number }}",
+			},
+			want: []string{"age", "email", "name"},
+		},
+		{
+			testName: "key with bracket notation is sanitized",
+			template: map[string]any{
+				"phones[3]": "{{ Person.phoneNumber }}",
+				"name":      "{{ Person.name }}",
+			},
+			want: []string{"name", "phones"},
+		},
+		{
+			testName: "single key",
+			template: map[string]any{"z": "val"},
+			want:     []string{"z"},
+		},
+	}
+
+	for _, tt := range tests {
+		headers := extractCsvHeaders(tt.template)
+		assert.Equal(suite.T(), tt.want, headers, "Test case '%s'", tt.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestAtomicFileCreate_CommitSucceeds() {
+	dir := suite.T().TempDir()
+	finalPath := filepath.Join(dir, "output.json")
+
+	f, commit, _, err := atomicFileCreate(finalPath)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), f)
+
+	_, err = f.WriteString(`{"ok":true}`)
+	assert.NoError(suite.T(), err)
+
+	err = commit()
+	assert.NoError(suite.T(), err)
+
+	// Final file must exist with expected content
+	content, err := os.ReadFile(finalPath)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), `{"ok":true}`, string(content))
+}
+
+func (suite *MockCmdTestSuite) TestAtomicFileCreate_AbortCleansUp() {
+	dir := suite.T().TempDir()
+	finalPath := filepath.Join(dir, "output.json")
+
+	f, _, abort, err := atomicFileCreate(finalPath)
+	assert.NoError(suite.T(), err)
+
+	tmpName := f.Name()
+	_, err = f.WriteString("partial")
+	assert.NoError(suite.T(), err)
+
+	abort()
+
+	// Temp file must be gone
+	_, err = os.Stat(tmpName)
+	assert.True(suite.T(), os.IsNotExist(err), "temp file should be removed after abort")
+
+	// Final file must NOT exist
+	_, err = os.Stat(finalPath)
+	assert.True(suite.T(), os.IsNotExist(err), "final file must not exist after abort")
 }
