@@ -59,7 +59,6 @@ ktns mock --parse-str 'Name: Person.name'
 - `--to-stdout <as-json|as-csv>`: Output the result to stdout as a JSON object/array or as a CSV table. Must be used with `--parse-json` or `--parse-json-file`. Use `--to-stdout-prettify` to format for readability. Note: CSV output works best with flat (one-level-deep) JSON objects; nested objects and arrays are serialised using their Go string representation.
 - `--to-stdout-prettify`: Prettify the stdout output (indented JSON or padded-column CSV). Only valid with `--to-stdout`.
 - `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` beside the binary (for `--parse-json`) or to the template name without `.template` in the same directory (for `--parse-json-file`). If a filename is given using `--to-json-file=myfile.json`, it is used as-is. Can be combined with `--to-stdout`.
-- `--no-progress`: Suppress the progress bar.
 
 ### Examples
 
@@ -168,12 +167,6 @@ Output to stdout as CSV:
 
 ```bash
 ktns mock --parse-json-file employee.template.json --to-stdout as-csv
-```
-
-Suppress the progress bar:
-
-```bash
-ktns mock --parse-json-file employee.template.json --to-json-file --no-progress
 ```
 
 With `--generate` to produce an array:
@@ -468,7 +461,6 @@ Would result in only the response body to be shown.
 - [`Cobra`](github.com/spf13/cobra): A commandder for modern Go CLI interations.
 - [`Faker/v2`](github.com/jaswdr/faker/v2): Fake data generator for Go.
 - [`Gogoren`](github.com/zach-klippenstein/goregen): Randexp for Go.
-- [`Mpb`](https://github.com/vbauerster/mpb): Multi progress bar for Go CLI applications.
 - [`Deepcopy`](github.com/mohae/deepcopy): Deepcopy things.
 - [`Testify`](github.com/stretchr/testify): Toolkit with common assertions and mocks that plays nicely with the standard library.
 

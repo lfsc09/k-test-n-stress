@@ -101,7 +101,6 @@ You always:
 | `github.com/jaswdr/faker/v2` | ~90% of mock functions |
 | `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` |
 | `github.com/mohae/deepcopy` | Deep-copying JSON template objects |
-| `github.com/vbauerster/mpb/v8` | Progress bar for `--parse-files` |
 | `github.com/stretchr/testify` | Test assertions and suites |
 
 ### Testing Patterns

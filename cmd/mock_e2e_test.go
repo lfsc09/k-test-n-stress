@@ -420,28 +420,6 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_ExplicitName_Par
 	assert.True(suite.T(), os.IsNotExist(statErr), testName)
 }
 
-// --- Step 16: --no-progress ---
-
-func (suite *MockCmdE2ETestSuite) TestCLIShouldSuppressProgressBar_ParseJson() {
-	testName := "Should suppress progress bar and still output valid JSON with --no-progress"
-	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"n": "{{ Person.name }}"}`, "--to-stdout", "as-json", "--no-progress")
-	assert.NoError(suite.T(), err, testName)
-	var result map[string]any
-	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
-}
-
-func (suite *MockCmdE2ETestSuite) TestCLIShouldSuppressProgressBar_ParseJsonFile() {
-	testName := "Should suppress progress bar and still write output file with --no-progress"
-	tmpDir := suite.T().TempDir()
-	templatePath := filepath.Join(tmpDir, "employee.template.json")
-	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
-	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file", "--no-progress")
-	assert.NoError(suite.T(), err, testName)
-	outPath := filepath.Join(tmpDir, "employee.json")
-	_, statErr := os.Stat(outPath)
-	assert.NoError(suite.T(), statErr, testName)
-}
-
 type MockDateSuite struct {
 	suite.Suite
 }

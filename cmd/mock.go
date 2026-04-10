@@ -11,13 +11,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/mohae/deepcopy"
 	"github.com/spf13/cobra"
-	"github.com/vbauerster/mpb/v8"
-	"github.com/vbauerster/mpb/v8/decor"
 )
 
 var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
@@ -86,7 +83,6 @@ Output routing (--parse-json and --parse-json-file):
   If no filename is given, defaults to output.json beside the binary (for --parse-json)
   or to the template name without .template (for --parse-json-file).
   Note: --to-json-file requires an explicit value or use --to-json-file "" for the default.
-* --no-progress: suppress the progress bar.
 * CSV output works best with flat (one-level-deep) JSON objects. Nested objects and arrays
   are serialised using their Go string representation.
 
@@ -103,7 +99,6 @@ Examples:
   ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file
   ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file myout.json
   ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-json-file
-  ktns mock --parse-json-file "path/to/employees.template.json" --no-progress --to-json-file
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			list, _ := cmd.Flags().GetBool("list")
@@ -115,7 +110,6 @@ Examples:
 			toStdoutPrettify, _ := cmd.Flags().GetBool("to-stdout-prettify")
 			toJsonFile, _ := cmd.Flags().GetString("to-json-file")
 			toJsonFileSet := cmd.Flags().Changed("to-json-file")
-			noProgress, _ := cmd.Flags().GetBool("no-progress")
 
 			if list {
 				mocker := mocker.New()
@@ -178,16 +172,6 @@ Examples:
 				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-stdout or --to-json-file")
 			}
 
-			mpbOut := io.Writer(os.Stdout)
-			if noProgress {
-				mpbOut = io.Discard
-			}
-			mpbHandler := mpb.New(
-				mpb.WithWidth(60),
-				mpb.WithOutput(mpbOut),
-				mpb.WithAutoRefresh(),
-			)
-
 			if runningParseStr {
 				// Process the string
 				mocker := mocker.New()
@@ -205,20 +189,15 @@ Examples:
 					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
 				}
 
-				// Progress bar: total = generate (one tick per root object produced)
-				bar := giveMeABar("parse-json", int64(generate), nil, mpbHandler)
-
 				// Process the parsed map
 				mocker := mocker.New()
 				parseMaps := make([]map[string]any, generate)
 				for i := range generate {
 					cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
 					if err := processJsonMap(cpParseMap, mocker); err != nil {
-						bar.Abort(false)
 						return fmt.Errorf("%w", err)
 					}
 					parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
-					bar.Increment()
 				}
 
 				// Sanitize the parsed map
@@ -254,20 +233,15 @@ Examples:
 				defaultFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
 				defaultFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultFileName)
 
-				// Progress bar: total = generate (one tick per root object produced); defaultFilePath for file-size display
-				bar := giveMeABar(filepath.Base(parseJsonFile), int64(generate), &defaultFilePath, mpbHandler)
-
 				// Process the parsed map
 				mocker := mocker.New()
 				parseMaps := make([]map[string]any, generate)
 				for i := range generate {
 					cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
 					if err := processJsonMap(cpParseMap, mocker); err != nil {
-						bar.Abort(false)
 						return fmt.Errorf("%w", err)
 					}
 					parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
-					bar.Increment()
 				}
 
 				// Sanitize the parsed maps
@@ -279,8 +253,6 @@ Examples:
 					return err
 				}
 			}
-
-			mpbHandler.Wait()
 
 			return nil
 		},
@@ -294,7 +266,6 @@ Examples:
 	mockCmd.Flags().String("to-stdout", "", "output result to stdout as 'as-json' or 'as-csv'")
 	mockCmd.Flags().Bool("to-stdout-prettify", false, "prettify the stdout output (only valid with --to-stdout)")
 	mockCmd.Flags().String("to-json-file", "", "output result as JSON to a file; optional filename argument")
-	mockCmd.Flags().Bool("no-progress", false, "suppress the progress bar")
 
 	// Allow --to-json-file to be used without a value (uses sentinel "_use_default_")
 	mockCmd.Flags().Lookup("to-json-file").NoOptDefVal = "_use_default_"
@@ -616,42 +587,6 @@ func sanitizeKeyWithBrackets(str string) string {
 		return strCleaned
 	}
 	return str
-}
-
-// Creates and returns a progress bar for a given task, with the total number of ticks and an optional output file path for size display.
-// The bar displays the task name, progress counters, elapsed time, and output file size (if provided).
-// The elapsed time is updated dynamically as the task progresses, and the file size is displayed if an output path is provided and the file exists.
-// The function uses the mpb library to create and manage the progress bar, and it returns the created bar for further updates.
-// The progress bar is configured to automatically refresh and display the relevant information in a clear format, making it easy to track the progress of tasks.
-// The function also handles the case where the output file may not exist yet, displaying "N/A" for the file size until the file is created and can be measured.
-func giveMeABar(taskName string, total int64, outPath *string, mpbHandler *mpb.Progress) *mpb.Bar {
-	startElapsedTime := time.Now()
-	var elapsedTime time.Duration
-	bar := mpbHandler.AddBar(total,
-		mpb.PrependDecorators(
-			decor.Name(taskName, decor.WCSyncWidthR),
-			decor.CountersNoUnit(" %d/%d ", decor.WCSyncWidthR),
-		),
-		mpb.AppendDecorators(
-			decor.Any(func(s decor.Statistics) string {
-				if !s.Completed {
-					elapsedTime = time.Since(startElapsedTime)
-				}
-				return formatDurationMetrics(elapsedTime)
-			}, decor.WCSyncWidth),
-			decor.Any(func(s decor.Statistics) string {
-				if outPath == nil {
-					return " [N/A] "
-				}
-				info, err := os.Stat(*outPath)
-				if err != nil {
-					return " [N/A] "
-				}
-				return formatSizeMetrics(info.Size())
-			}, decor.WCSyncWidth),
-		),
-	)
-	return bar
 }
 
 // executableDir returns the directory of the running ktns binary.
