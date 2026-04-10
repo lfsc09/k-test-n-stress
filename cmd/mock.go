@@ -28,7 +28,7 @@ func NewMockCmd(opts *CommandOptions) *cobra.Command {
 Mock functions:
 
 * List available mock functions with --list.
-* Always call the mock function with the format {{ functionName:{arg1}:{arg2}:{argN} }}. (Values not wrapped in double curly braces will be considered raw values)
+* Always call the mock function with the format {{ functionName:{arg1}:{arg2}:{argN} }}. (Values not wrapped in double curly braces will be considered literal values)
 * When passing parameters to the mock functions, wrap each value in curly braces ({value}) and use colon (:) outside the braces as the separator between parameters (e.g. {{ Number.number::{1}:{100} }}, {{ Date.time:{18:00}:{20:00} }}).
 * Leave a parameter empty (bare :: or {}) to use its default value (e.g. {{ Number.number:::{100} }} leaves decimals and min at their defaults).
 * For regex parameters, wrap the pattern in slashes (/pattern/) instead of curly braces (e.g. {{ Date.date:::/YYYY-MM-DD/ }}, {{ Regex.regex:/[a-z]{3}/ }}). Colons inside /…/ are never treated as delimiters.
@@ -76,13 +76,17 @@ Controling the number of generated data:
 
 Output routing (--parse-json and --parse-json-file):
 
-* At least one of --to-stdout or --to-json-file must be provided.
+* At least one of --to-stdout, --to-json-file or --to-csv-file must be provided.
 * --to-stdout <as-json|as-csv>: print the result to stdout as JSON or CSV.
 * --to-stdout-prettify: format the stdout output for readability (only valid with --to-stdout).
 * --to-json-file [filename]: write the result as JSON to a file.
   If no filename is given, defaults to output.json beside the binary (for --parse-json)
   or to the template name without .template (for --parse-json-file).
   Note: --to-json-file requires an explicit value or use --to-json-file "" for the default.
+* --to-csv-file [filename]: write the result as CSV to a file.
+  If no filename is given, defaults to output.csv beside the binary (for --parse-json)
+  or to the template name without .template with a .csv extension (for --parse-json-file).
+  Note: --to-csv-file requires an explicit value or use --to-csv-file "" for the default.
 * CSV output works best with flat (one-level-deep) JSON objects. Nested objects and arrays
   are serialised using their Go string representation.
 
@@ -99,6 +103,11 @@ Examples:
   ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file
   ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file myout.json
   ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-json-file
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file mydata.csv
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-csv-file
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-csv-file myout.csv
+  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-csv-file
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			list, _ := cmd.Flags().GetBool("list")
@@ -110,6 +119,8 @@ Examples:
 			toStdoutPrettify, _ := cmd.Flags().GetBool("to-stdout-prettify")
 			toJsonFile, _ := cmd.Flags().GetString("to-json-file")
 			toJsonFileSet := cmd.Flags().Changed("to-json-file")
+			toCsvFile, _ := cmd.Flags().GetString("to-csv-file")
+			toCsvFileSet := cmd.Flags().Changed("to-csv-file")
 
 			if list {
 				mocker := mocker.New()
@@ -163,13 +174,13 @@ Examples:
 			}
 
 			// Validate --parse-str incompatibility with output flags
-			if runningParseStr && (toStdout != "" || toJsonFileSet) {
-				return fmt.Errorf("--parse-str always outputs to stdout; --to-stdout and --to-json-file are not available with --parse-str")
+			if runningParseStr && (toStdout != "" || toJsonFileSet || toCsvFileSet) {
+				return fmt.Errorf("--parse-str always outputs to stdout; --to-stdout, --to-json-file and --to-csv-file are not available with --parse-str")
 			}
 
 			// Validate at least one output flag when using --parse-json or --parse-json-file
-			if !runningParseStr && toStdout == "" && !toJsonFileSet {
-				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-stdout or --to-json-file")
+			if !runningParseStr && toStdout == "" && !toJsonFileSet && !toCsvFileSet {
+				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-stdout, --to-json-file or --to-csv-file")
 			}
 
 			if runningParseStr {
@@ -205,7 +216,7 @@ Examples:
 					sanitizeJsonMap(parseMaps[i])
 				}
 
-				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, "parse-json", "", opts.Out); err != nil {
+				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, toCsvFileSet, toCsvFile, "parse-json", "", "", opts.Out); err != nil {
 					return err
 				}
 			}
@@ -232,6 +243,8 @@ Examples:
 				// Determine the default output file path: same directory as the template file, .template.json → .json
 				defaultFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
 				defaultFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultFileName)
+				defaultCsvFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".csv", 1)
+				defaultCsvFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultCsvFileName)
 
 				// Process the parsed map
 				mocker := mocker.New()
@@ -249,7 +262,7 @@ Examples:
 					sanitizeJsonMap(parseMaps[i])
 				}
 
-				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, "parse-json-file", defaultFilePath, opts.Out); err != nil {
+				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, toCsvFileSet, toCsvFile, "parse-json-file", defaultFilePath, defaultCsvFilePath, opts.Out); err != nil {
 					return err
 				}
 			}
@@ -269,6 +282,9 @@ Examples:
 
 	// Allow --to-json-file to be used without a value (uses sentinel "_use_default_")
 	mockCmd.Flags().Lookup("to-json-file").NoOptDefVal = "_use_default_"
+
+	mockCmd.Flags().String("to-csv-file", "", "output result as CSV to a file; optional filename argument")
+	mockCmd.Flags().Lookup("to-csv-file").NoOptDefVal = "_use_default_"
 
 	// Configure cobra ouput streams to use the custom 'Out'
 	mockCmd.SetOut(opts.Out)
@@ -687,8 +703,11 @@ func marshalAsCSV(parseMaps []map[string]any, prettify bool) (string, error) {
 // toStdoutPrettify controls indented vs compact stdout output.
 // toJsonFileSet indicates --to-json-file was passed (even with empty value).
 // toJsonFileValue is the optional filename given with --to-json-file.
+// toCsvFileSet indicates --to-csv-file was passed (even with empty value).
+// toCsvFileValue is the optional filename given with --to-csv-file.
 // source is "parse-json" or "parse-json-file".
-// defaultFilePath is the full default output path (used when source is "parse-json-file" and no explicit filename was given).
+// defaultFilePath is the full default JSON output path (used when source is "parse-json-file" and no explicit filename was given).
+// defaultCsvFilePath is the full default CSV output path (used when source is "parse-json-file" and no explicit csv filename was given).
 // out is the writer for stdout.
 func routeOutput(
 	parseMaps []map[string]any,
@@ -697,8 +716,11 @@ func routeOutput(
 	toStdoutPrettify bool,
 	toJsonFileSet bool,
 	toJsonFileValue string,
+	toCsvFileSet bool,
+	toCsvFileValue string,
 	source string,
 	defaultFilePath string,
+	defaultCsvFilePath string,
 	out io.Writer,
 ) error {
 	// Determine the data shape
@@ -761,6 +783,37 @@ func routeOutput(
 
 		if err = os.WriteFile(resolvedPath, jsonBytes, 0644); err != nil {
 			return fmt.Errorf("failed to write result to '%s': %w", resolvedPath, err)
+		}
+	}
+
+	// CSV file output
+	if toCsvFileSet {
+		var resolvedCsvPath string
+		switch {
+		case toCsvFileValue != "" && toCsvFileValue != "_use_default_":
+			resolvedCsvPath = toCsvFileValue
+		case source == "parse-json-file":
+			resolvedCsvPath = defaultCsvFilePath
+		default:
+			// source == "parse-json": use output.csv beside the binary
+			dir, err := executableDir()
+			if err != nil {
+				return err
+			}
+			resolvedCsvPath = filepath.Join(dir, "output.csv")
+		}
+
+		// Delete any existing file at that path
+		_ = os.Remove(resolvedCsvPath)
+
+		// CSV files are written in standard (non-prettified) format
+		csvStr, err := marshalAsCSV(parseMaps, false)
+		if err != nil {
+			return err
+		}
+
+		if err = os.WriteFile(resolvedCsvPath, []byte(csvStr+"\n"), 0644); err != nil {
+			return fmt.Errorf("failed to write CSV result to '%s': %w", resolvedCsvPath, err)
 		}
 	}
 

@@ -420,6 +420,112 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_ExplicitName_Par
 	assert.True(suite.T(), os.IsNotExist(statErr), testName)
 }
 
+// --- Step 16: --to-csv-file ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseStrWithToCsvFile() {
+	testName := "Should raise error when --parse-str is combined with --to-csv-file"
+	_, err := suite.executeCommand("mock", "--parse-str", "Hello", "--to-csv-file")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "--parse-str always outputs to stdout", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_DefaultName_ParseJson() {
+	testName := "Should create output.csv beside binary when --to-csv-file is passed with no value (parse-json)"
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-csv-file")
+	assert.NoError(suite.T(), err, testName)
+	// File is beside os.Executable(); in tests that's a temp binary path
+	// We simply assert no error was returned — the exact path is environment-dependent
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_ExplicitName_ParseJson() {
+	testName := "Should write CSV to explicit path with --to-csv-file <path>"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.csv")
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}", "age": "{{ Number.number::{18}:{80} }}"}`, "--to-csv-file="+outPath)
+	assert.NoError(suite.T(), err, testName)
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	// Header line should be sorted keys: age,name
+	assert.Equal(suite.T(), "age,name", lines[0], testName)
+	// 1 header + 1 data row
+	assert.Len(suite.T(), lines, 2, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_DefaultName_ParseJsonFile() {
+	testName := "Should write default employee.csv alongside template when --to-csv-file is passed with no value"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-csv-file")
+	assert.NoError(suite.T(), err, testName)
+	outPath := filepath.Join(tmpDir, "employee.csv")
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	assert.Equal(suite.T(), "name", lines[0], testName)
+	assert.Len(suite.T(), lines, 2, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_ExplicitName_ParseJsonFile() {
+	testName := "Should write to explicit CSV path and NOT create default file when explicit --to-csv-file is given"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	outPath := filepath.Join(tmpDir, "out.csv")
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-csv-file="+outPath)
+	assert.NoError(suite.T(), err, testName)
+	// Explicit output file must exist
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	assert.Equal(suite.T(), "name", lines[0], testName)
+	// Default file must NOT exist
+	defaultOut := filepath.Join(tmpDir, "employee.csv")
+	_, statErr := os.Stat(defaultOut)
+	assert.True(suite.T(), os.IsNotExist(statErr), testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_WithGenerate() {
+	testName := "Should write CSV file with N data rows when --generate is used"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.csv")
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--generate", "3", "--to-csv-file="+outPath)
+	assert.NoError(suite.T(), err, testName)
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	// 1 header + 3 data rows
+	assert.Len(suite.T(), lines, 4, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_DeletesPreviousOutput() {
+	testName := "Should delete stale CSV output file before writing new one"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	outPath := filepath.Join(tmpDir, "employee.csv")
+	_ = os.WriteFile(outPath, []byte("stale,data\n1,2\n"), 0644)
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-csv-file")
+	assert.NoError(suite.T(), err, testName)
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	assert.NotContains(suite.T(), string(data), "stale", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputBothJsonAndCsvFile() {
+	testName := "Should write both JSON and CSV files when both --to-json-file and --to-csv-file are given"
+	tmpDir := suite.T().TempDir()
+	jsonPath := filepath.Join(tmpDir, "result.json")
+	csvPath := filepath.Join(tmpDir, "result.csv")
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-json-file="+jsonPath, "--to-csv-file="+csvPath)
+	assert.NoError(suite.T(), err, testName)
+	_, jsonErr := os.Stat(jsonPath)
+	assert.NoError(suite.T(), jsonErr, testName)
+	_, csvErr := os.Stat(csvPath)
+	assert.NoError(suite.T(), csvErr, testName)
+}
+
 type MockDateSuite struct {
 	suite.Suite
 }
