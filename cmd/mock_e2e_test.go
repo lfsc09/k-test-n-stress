@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/cmd"
@@ -98,11 +99,11 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagInvalidVal
 	}{
 		{
 			testName: "--generate with value equal to 0",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "0"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "0", "--to-stdout", "as-json"},
 		},
 		{
 			testName: "--generate with negative value",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "-1"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "-1", "--to-stdout", "as-json"},
 		},
 	}
 	for _, test := range tests {
@@ -136,7 +137,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldReturnListOfMockFunctions() {
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseJsonFileNotFound() {
 	testName := "Should raise error when --parse-json-file file is not found"
-	_, err := suite.executeCommand("mock", "--parse-json-file", "/nonexistent/path/file.template.json")
+	_, err := suite.executeCommand("mock", "--parse-json-file", "/nonexistent/path/file.template.json", "--to-json-file")
 	assert.Error(suite.T(), err, testName)
 	assert.Contains(suite.T(), err.Error(), "template file not found", testName)
 }
@@ -149,7 +150,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile() {
 	err := os.WriteFile(templatePath, []byte(templateContent), 0644)
 	assert.NoError(suite.T(), err, testName)
 
-	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath)
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file")
 	assert.NoError(suite.T(), err, testName)
 
 	outPath := filepath.Join(tmpDir, "employee.json")
@@ -174,7 +175,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile_WithGenerate() {
 	err := os.WriteFile(templatePath, []byte(templateContent), 0644)
 	assert.NoError(suite.T(), err, testName)
 
-	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath, "--generate", "3")
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath, "--generate", "3", "--to-json-file")
 	assert.NoError(suite.T(), err, testName)
 
 	outPath := filepath.Join(tmpDir, "employee.json")
@@ -200,7 +201,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldParseJsonFile_DeletesPreviousOutp
 	err = os.WriteFile(outPath, []byte(staleContent), 0644)
 	assert.NoError(suite.T(), err, testName)
 
-	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath)
+	_, err = suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file")
 	assert.NoError(suite.T(), err, testName)
 
 	outContent, readErr := os.ReadFile(outPath)
@@ -236,6 +237,209 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldMockFromParseStr() {
 		assert.NoError(suite.T(), err, test.testName)
 		assert.Contains(suite.T(), stdOut, test.expectedValue, test.testName)
 	}
+}
+
+// --- Step 11: .template.json constraint ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseJsonFileInvalidExtension() {
+	testName := "Should raise error when --parse-json-file does not end with .template.json"
+	_, err := suite.executeCommand("mock", "--parse-json-file", "/tmp/employee.json", "--to-json-file")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "requires the template filename to end with '.template.json'", testName)
+}
+
+// --- Step 12: --to-stdout validation ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ToStdoutInvalidValue() {
+	testName := "Should raise error when --to-stdout has an invalid value"
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-stdout", "invalid")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "only accepts 'as-json' or 'as-csv'", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ToStdoutPrettifyWithoutToStdout() {
+	testName := "Should raise error when --to-stdout-prettify is used without --to-stdout"
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-stdout-prettify")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "requires --to-stdout to be set", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseStrWithToStdout() {
+	testName := "Should raise error when --parse-str is combined with --to-stdout"
+	_, err := suite.executeCommand("mock", "--parse-str", "Hello", "--to-stdout", "as-json")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "--parse-str always outputs to stdout", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseStrWithToJsonFile() {
+	testName := "Should raise error when --parse-str is combined with --to-json-file"
+	_, err := suite.executeCommand("mock", "--parse-str", "Hello", "--to-json-file")
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "--parse-str always outputs to stdout", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseJsonWithNoOutputFlag() {
+	testName := "Should raise error when --parse-json is used without any output flag"
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`)
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "require at least one output flag", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseJsonFileWithNoOutputFlag() {
+	testName := "Should raise error when --parse-json-file is used without any output flag"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath)
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "require at least one output flag", testName)
+}
+
+// --- Step 13: --to-stdout as-json ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsJson_ParseJson() {
+	testName := "Should output compact JSON to stdout with --to-stdout as-json"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-stdout", "as-json")
+	assert.NoError(suite.T(), err, testName)
+	// Should be valid JSON
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
+	// Compact: should NOT contain indentation (two-space)
+	assert.NotContains(suite.T(), stdOut, "  ", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsJson_ParseJson_Prettify() {
+	testName := "Should output indented JSON to stdout with --to-stdout as-json --to-stdout-prettify"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-stdout", "as-json", "--to-stdout-prettify")
+	assert.NoError(suite.T(), err, testName)
+	assert.Contains(suite.T(), stdOut, "  ", testName)
+	// Should still be valid JSON
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsJson_ParseJsonFile() {
+	testName := "Should output JSON to stdout from --parse-json-file with --to-stdout as-json (no file written)"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	stdOut, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-stdout", "as-json")
+	assert.NoError(suite.T(), err, testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
+	// No output file should have been created (--to-json-file was not passed)
+	defaultOut := filepath.Join(tmpDir, "employee.json")
+	_, statErr := os.Stat(defaultOut)
+	assert.True(suite.T(), os.IsNotExist(statErr), testName)
+}
+
+// --- Step 14: --to-stdout as-csv ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsCsv_ParseJson() {
+	testName := "Should output compact CSV to stdout with --to-stdout as-csv"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}", "age": "{{ Number.number::{18}:{80} }}"}`, "--to-stdout", "as-csv")
+	assert.NoError(suite.T(), err, testName)
+	lines := strings.Split(strings.TrimSpace(stdOut), "\n")
+	// Header line should be sorted keys
+	assert.Equal(suite.T(), "age,name", lines[0], testName)
+	// Exactly 2 lines: header + 1 data row
+	assert.Len(suite.T(), lines, 2, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsCsv_ParseJson_Prettify() {
+	testName := "Should output prettified CSV to stdout with --to-stdout as-csv --to-stdout-prettify"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}", "age": "{{ Number.number::{18}:{80} }}"}`, "--to-stdout", "as-csv", "--to-stdout-prettify")
+	assert.NoError(suite.T(), err, testName)
+	assert.Contains(suite.T(), stdOut, " | ", testName)
+	assert.Contains(suite.T(), stdOut, "---", testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsCsv_ParseJson_WithGenerate() {
+	testName := "Should output CSV with multiple rows when --generate is set"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--generate", "3", "--to-stdout", "as-csv")
+	assert.NoError(suite.T(), err, testName)
+	lines := strings.Split(strings.TrimSpace(stdOut), "\n")
+	// 1 header + 3 data rows
+	assert.Len(suite.T(), lines, 4, testName)
+}
+
+// --- Step 15: --to-json-file ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_DefaultName_ParseJson() {
+	testName := "Should create output.json beside binary when --to-json-file is passed with no value (parse-json)"
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-json-file")
+	assert.NoError(suite.T(), err, testName)
+	// The file is written beside os.Executable(); in tests that's a temp binary path
+	// We simply assert no error was returned — the exact path is environment-dependent
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_ExplicitName_ParseJson() {
+	testName := "Should write JSON to explicit path with --to-json-file <path>"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.json")
+	// With NoOptDefVal set, explicit values must use --flag=value syntax
+	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-json-file="+outPath)
+	assert.NoError(suite.T(), err, testName)
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal(data, &result), testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_DefaultName_ParseJsonFile() {
+	testName := "Should write default employee.json alongside template when --to-json-file is passed with no value"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file")
+	assert.NoError(suite.T(), err, testName)
+	outPath := filepath.Join(tmpDir, "employee.json")
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal(data, &result), testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_ExplicitName_ParseJsonFile() {
+	testName := "Should write to explicit path and NOT create default file when explicit --to-json-file is given"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	outPath := filepath.Join(tmpDir, "out.json")
+	// With NoOptDefVal set, explicit values must use --flag=value syntax
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file="+outPath)
+	assert.NoError(suite.T(), err, testName)
+	// Explicit output file must exist
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal(data, &result), testName)
+	// Default file must NOT exist
+	defaultOut := filepath.Join(tmpDir, "employee.json")
+	_, statErr := os.Stat(defaultOut)
+	assert.True(suite.T(), os.IsNotExist(statErr), testName)
+}
+
+// --- Step 16: --no-progress ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldSuppressProgressBar_ParseJson() {
+	testName := "Should suppress progress bar and still output valid JSON with --no-progress"
+	stdOut, err := suite.executeCommand("mock", "--parse-json", `{"n": "{{ Person.name }}"}`, "--to-stdout", "as-json", "--no-progress")
+	assert.NoError(suite.T(), err, testName)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result), testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldSuppressProgressBar_ParseJsonFile() {
+	testName := "Should suppress progress bar and still write output file with --no-progress"
+	tmpDir := suite.T().TempDir()
+	templatePath := filepath.Join(tmpDir, "employee.template.json")
+	_ = os.WriteFile(templatePath, []byte(`{"name": "{{ Person.name }}"}`), 0644)
+	_, err := suite.executeCommand("mock", "--parse-json-file", templatePath, "--to-json-file", "--no-progress")
+	assert.NoError(suite.T(), err, testName)
+	outPath := filepath.Join(tmpDir, "employee.json")
+	_, statErr := os.Stat(outPath)
+	assert.NoError(suite.T(), statErr, testName)
 }
 
 type MockDateSuite struct {
@@ -370,7 +574,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldInlineError_BareParamValues() {
 		{testName: "bare second param in json", jsonStr: `{"n": "{{ Number.number:{0}:5 }}"}`},
 	}
 	for _, tt := range parseJsonCases {
-		_, err := suite.executeCommand("mock", "--parse-json", tt.jsonStr)
+		_, err := suite.executeCommand("mock", "--parse-json", tt.jsonStr, "--to-stdout", "as-json")
 		assert.Error(suite.T(), err, tt.testName)
 		assert.Contains(suite.T(), err.Error(), "must be wrapped in", tt.testName)
 	}
@@ -711,7 +915,7 @@ func (suite *MockCmdE2ETestSuite) TestCLIParseJson_NestedStructures() {
 	}
 
 	for _, tt := range tests {
-		stdOut, err := suite.executeCommand("mock", "--parse-json", tt.jsonStr)
+		stdOut, err := suite.executeCommand("mock", "--parse-json", tt.jsonStr, "--to-stdout", "as-json")
 		if tt.expectError {
 			assert.Error(suite.T(), err, tt.testName)
 			if tt.assertContains != "" {
@@ -735,12 +939,12 @@ func (suite *MockCmdE2ETestSuite) TestCLIParseJson_GenerateFlag() {
 	}{
 		{
 			testName:    "generate=3, output is JSON array with 3 elements",
-			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`, "--generate", "3"},
+			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`, "--generate", "3", "--to-stdout", "as-json"},
 			assertRegex: `^\[`,
 		},
 		{
 			testName:    "generate=1 (default), output is JSON object not array",
-			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`},
+			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`, "--to-stdout", "as-json"},
 			assertRegex: `^\{`,
 		},
 	}

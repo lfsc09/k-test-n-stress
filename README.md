@@ -53,9 +53,13 @@ ktns mock --parse-str 'Name: Person.name'
 
 - `--list`: To list all available mock functions.
 - `--parse-str`: Pass a literal string to be parsed. The mock data will be generated based on the provided string.
-- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
-- `--parse-json-file`: Pass a path to a single `.template.json` file. The mock data will be generated based on this file and written alongside it.
+- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object. Requires `--to-stdout` or `--to-json-file`.
+- `--parse-json-file`: Pass a path to a single `.template.json` file (the filename **must** end with `.template.json`). The mock data will be generated based on this file. Requires `--to-stdout` or `--to-json-file`.
 - `--generate`: Pass the desired amount of root objects that will be generated (available for `--parse-json` and `--parse-json-file`). (More info [here](#generating-multiple-values))
+- `--to-stdout <as-json|as-csv>`: Output the result to stdout as a JSON object/array or as a CSV table. Must be used with `--parse-json` or `--parse-json-file`. Use `--to-stdout-prettify` to format for readability. Note: CSV output works best with flat (one-level-deep) JSON objects; nested objects and arrays are serialised using their Go string representation.
+- `--to-stdout-prettify`: Prettify the stdout output (indented JSON or padded-column CSV). Only valid with `--to-stdout`.
+- `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` beside the binary (for `--parse-json`) or to the template name without `.template` in the same directory (for `--parse-json-file`). If a filename is given using `--to-json-file=myfile.json`, it is used as-is. Can be combined with `--to-stdout`.
+- `--no-progress`: Suppress the progress bar.
 
 ### Examples
 
@@ -77,13 +81,54 @@ ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number
 
 #### `--parse-json`
 
-```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }'
+Output to stdout as compact JSON:
 
-# { "company": "Delvalle", "employee": { "name": "Josh Smith" } }
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-stdout as-json
+
+# {"company":"Delvalle","employee":{"name":"Josh Smith"}}
+```
+
+Output to stdout as prettified JSON:
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-stdout as-json --to-stdout-prettify
+
+# {
+#   "company": "Delvalle"
+# }
+```
+
+Output to stdout as CSV:
+
+```bash
+ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number::{18}:{80} }}" }' --to-stdout as-csv
+
+# age,name
+# 34,Josh Smith
+```
+
+Write to a file (default name `output.json` beside the binary):
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file
+```
+
+Write to a specific file:
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file=mydata.json
+```
+
+Both stdout and file simultaneously:
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-stdout as-json --to-json-file=mydata.json
 ```
 
 #### `--parse-json-file`
+
+The template file **must** end with `.template.json`.
 
 ```json
 // employee.template.json
@@ -96,8 +141,10 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 }
 ```
 
+Write the default output file alongside the template (`employee.json`):
+
 ```bash
-ktns mock --parse-json-file employee.template.json
+ktns mock --parse-json-file employee.template.json --to-json-file
 ```
 
 ```json
@@ -111,10 +158,28 @@ ktns mock --parse-json-file employee.template.json
 }
 ```
 
+Write to a specific file:
+
+```bash
+ktns mock --parse-json-file employee.template.json --to-json-file=myout.json
+```
+
+Output to stdout as CSV:
+
+```bash
+ktns mock --parse-json-file employee.template.json --to-stdout as-csv
+```
+
+Suppress the progress bar:
+
+```bash
+ktns mock --parse-json-file employee.template.json --to-json-file --no-progress
+```
+
 With `--generate` to produce an array:
 
 ```bash
-ktns mock --parse-json-file employee.template.json --generate 3
+ktns mock --parse-json-file employee.template.json --generate 3 --to-json-file
 ```
 
 ```json
@@ -157,7 +222,7 @@ When working with multiple parameters, you may leave them blank if not used. _(T
 Use the flag `--generate <number>` with `--parse-json` or `--parse-json-file` to generate multiple root objects.
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10 --to-stdout as-json
 
 # This will generate
 [
@@ -169,7 +234,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10
 ```
 
 ```bash
-ktns mock --parse-json-file employees.template.json --generate 5
+ktns mock --parse-json-file employees.template.json --generate 5 --to-json-file
 # Writes employees.json with an array of 5 objects in the same directory as the template file.
 ```
 

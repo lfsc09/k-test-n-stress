@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,16 +73,37 @@ Controling the number of generated data:
     "phones": [ "...", "...", "...", "...", "..." ]
   }
 
-* When using --parse-json-file, the output file is written alongside the template file.
+* When using --parse-json-file, the template filename must end with ".template.json".
+  The default output file is written alongside the template file.
   e.g.: "path/to/employees.template.json" → "path/to/employees.json"
+
+Output routing (--parse-json and --parse-json-file):
+
+* At least one of --to-stdout or --to-json-file must be provided.
+* --to-stdout <as-json|as-csv>: print the result to stdout as JSON or CSV.
+* --to-stdout-prettify: format the stdout output for readability (only valid with --to-stdout).
+* --to-json-file [filename]: write the result as JSON to a file.
+  If no filename is given, defaults to output.json beside the binary (for --parse-json)
+  or to the template name without .template (for --parse-json-file).
+  Note: --to-json-file requires an explicit value or use --to-json-file "" for the default.
+* --no-progress: suppress the progress bar.
+* CSV output works best with flat (one-level-deep) JSON objects. Nested objects and arrays
+  are serialised using their Go string representation.
 
 Examples:
   ktns mock --parse-str '{{ Person.name }}'
   ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number:{0}:{1}:{100} }} years old'
-  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number:{0}:{1}:{100} }}" }'
-  ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5
-  ktns mock --parse-json-file "path/to/employees.template.json"
-  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5
+  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number:{0}:{1}:{100} }}" }' --to-stdout as-json
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-stdout as-csv
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-stdout as-json --to-stdout-prettify
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file mydata.json
+  ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5 --to-stdout as-json
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-stdout as-csv
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file myout.json
+  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-json-file
+  ktns mock --parse-json-file "path/to/employees.template.json" --no-progress --to-json-file
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			list, _ := cmd.Flags().GetBool("list")
@@ -87,6 +111,11 @@ Examples:
 			parseJson, _ := cmd.Flags().GetString("parse-json")
 			parseJsonFile, _ := cmd.Flags().GetString("parse-json-file")
 			generate, _ := cmd.Flags().GetInt("generate")
+			toStdout, _ := cmd.Flags().GetString("to-stdout")
+			toStdoutPrettify, _ := cmd.Flags().GetBool("to-stdout-prettify")
+			toJsonFile, _ := cmd.Flags().GetString("to-json-file")
+			toJsonFileSet := cmd.Flags().Changed("to-json-file")
+			noProgress, _ := cmd.Flags().GetBool("no-progress")
 
 			if list {
 				mocker := mocker.New()
@@ -124,9 +153,38 @@ Examples:
 				return fmt.Errorf("--generate option must be greater than 0")
 			}
 
+			// Validate --parse-json-file filename constraint
+			if runningParseJsonFile && !strings.HasSuffix(filepath.Base(parseJsonFile), ".template.json") {
+				return fmt.Errorf("--parse-json-file requires the template filename to end with '.template.json', got '%s'", filepath.Base(parseJsonFile))
+			}
+
+			// Validate --to-stdout value
+			if toStdout != "" && toStdout != "as-json" && toStdout != "as-csv" {
+				return fmt.Errorf("--to-stdout only accepts 'as-json' or 'as-csv', got '%s'", toStdout)
+			}
+
+			// Validate --to-stdout-prettify requires --to-stdout
+			if toStdoutPrettify && toStdout == "" {
+				return fmt.Errorf("--to-stdout-prettify requires --to-stdout to be set")
+			}
+
+			// Validate --parse-str incompatibility with output flags
+			if runningParseStr && (toStdout != "" || toJsonFileSet) {
+				return fmt.Errorf("--parse-str always outputs to stdout; --to-stdout and --to-json-file are not available with --parse-str")
+			}
+
+			// Validate at least one output flag when using --parse-json or --parse-json-file
+			if !runningParseStr && toStdout == "" && !toJsonFileSet {
+				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-stdout or --to-json-file")
+			}
+
+			mpbOut := io.Writer(os.Stdout)
+			if noProgress {
+				mpbOut = io.Discard
+			}
 			mpbHandler := mpb.New(
 				mpb.WithWidth(60),
-				mpb.WithOutput(os.Stdout),
+				mpb.WithOutput(mpbOut),
 				mpb.WithAutoRefresh(),
 			)
 
@@ -168,18 +226,9 @@ Examples:
 					sanitizeJsonMap(parseMaps[i])
 				}
 
-				// Print the result to stdout
-				var prettyJSON []byte
-				var err error
-				if generate == 1 {
-					prettyJSON, err = json.MarshalIndent(parseMaps[0], "", "  ")
-				} else {
-					prettyJSON, err = json.MarshalIndent(parseMaps, "", "  ")
+				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, "parse-json", "", opts.Out); err != nil {
+					return err
 				}
-				if err != nil {
-					return fmt.Errorf("error marshalling JSON '%w'", err)
-				}
-				fmt.Fprintf(opts.Out, "%s\n", prettyJSON)
 			}
 
 			// Parse object from `--parse-json-file` file
@@ -201,15 +250,12 @@ Examples:
 					return fmt.Errorf("failed to parse JSON from --parse-json-file '%w'", err)
 				}
 
-				// Determine output file path: same directory as the template file, .template.json → .json
-				outName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
-				outPath := filepath.Join(filepath.Dir(parseJsonFile), outName)
+				// Determine the default output file path: same directory as the template file, .template.json → .json
+				defaultFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
+				defaultFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultFileName)
 
-				// Always delete the output file before writing a new one
-				_ = os.Remove(outPath)
-
-				// Progress bar: total = generate (one tick per root object produced); outPath for file-size display
-				bar := giveMeABar(filepath.Base(parseJsonFile), int64(generate), &outPath, mpbHandler)
+				// Progress bar: total = generate (one tick per root object produced); defaultFilePath for file-size display
+				bar := giveMeABar(filepath.Base(parseJsonFile), int64(generate), &defaultFilePath, mpbHandler)
 
 				// Process the parsed map
 				mocker := mocker.New()
@@ -229,20 +275,8 @@ Examples:
 					sanitizeJsonMap(parseMaps[i])
 				}
 
-				// Marshal the result
-				var prettyJSON []byte
-				if generate == 1 {
-					prettyJSON, err = json.MarshalIndent(parseMaps[0], "", "  ")
-				} else {
-					prettyJSON, err = json.MarshalIndent(parseMaps, "", "  ")
-				}
-				if err != nil {
-					return fmt.Errorf("error marshalling JSON '%w'", err)
-				}
-
-				// Write the output file
-				if err = os.WriteFile(outPath, prettyJSON, 0644); err != nil {
-					return fmt.Errorf("failed to write result to '%s': '%w'", outPath, err)
+				if err := routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, "parse-json-file", defaultFilePath, opts.Out); err != nil {
+					return err
 				}
 			}
 
@@ -255,8 +289,15 @@ Examples:
 	mockCmd.Flags().Bool("list", false, "list all available mock functions")
 	mockCmd.Flags().String("parse-str", "", "pass a string to be parsed. The mock data will be generated based on this provided string")
 	mockCmd.Flags().String("parse-json", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
-	mockCmd.Flags().String("parse-json-file", "", "pass a path to a single .template.json file. The mock data will be generated based on this file and written alongside it")
+	mockCmd.Flags().String("parse-json-file", "", "pass a path to a single .template.json file. The mock data will be generated based on this file")
 	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse-json and --parse-json-file)")
+	mockCmd.Flags().String("to-stdout", "", "output result to stdout as 'as-json' or 'as-csv'")
+	mockCmd.Flags().Bool("to-stdout-prettify", false, "prettify the stdout output (only valid with --to-stdout)")
+	mockCmd.Flags().String("to-json-file", "", "output result as JSON to a file; optional filename argument")
+	mockCmd.Flags().Bool("no-progress", false, "suppress the progress bar")
+
+	// Allow --to-json-file to be used without a value (uses sentinel "_use_default_")
+	mockCmd.Flags().Lookup("to-json-file").NoOptDefVal = "_use_default_"
 
 	// Configure cobra ouput streams to use the custom 'Out'
 	mockCmd.SetOut(opts.Out)
@@ -611,4 +652,182 @@ func giveMeABar(taskName string, total int64, outPath *string, mpbHandler *mpb.P
 		),
 	)
 	return bar
+}
+
+// executableDir returns the directory of the running ktns binary.
+// Used to resolve the default output path for --to-json-file when parsing from stdin.
+func executableDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("could not determine executable path: %w", err)
+	}
+	return filepath.Dir(exe), nil
+}
+
+// marshalAsCSV serialises a slice of flat maps to CSV.
+// If prettify is true, columns are padded to equal width for readability.
+// If prettify is false, output is standard compact RFC 4180 CSV.
+// Column order is determined by the sorted union of all keys across all rows.
+// Values are always coerced to strings.
+// Note: works best with flat (one-level-deep) JSON objects. Nested objects/arrays
+// will be serialised as their Go string representation.
+func marshalAsCSV(parseMaps []map[string]any, prettify bool) (string, error) {
+	// Collect unique keys across all rows
+	keySet := make(map[string]struct{})
+	for _, m := range parseMaps {
+		for k := range m {
+			keySet[k] = struct{}{}
+		}
+	}
+	headers := make([]string, 0, len(keySet))
+	for k := range keySet {
+		headers = append(headers, k)
+	}
+	sort.Strings(headers)
+
+	// Build rows: header + one row per map
+	rows := make([][]string, 0, len(parseMaps)+1)
+	rows = append(rows, headers)
+	for _, m := range parseMaps {
+		row := make([]string, len(headers))
+		for i, h := range headers {
+			if val, ok := m[h]; ok {
+				row[i] = fmt.Sprintf("%v", val)
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	if !prettify {
+		var sb strings.Builder
+		w := csv.NewWriter(&sb)
+		if err := w.WriteAll(rows); err != nil {
+			return "", fmt.Errorf("error writing CSV: %w", err)
+		}
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return "", fmt.Errorf("error flushing CSV: %w", err)
+		}
+		// WriteAll adds a trailing newline; trim it so callers can add their own
+		return strings.TrimRight(sb.String(), "\n"), nil
+	}
+
+	// Prettified: compute max column width
+	colWidths := make([]int, len(headers))
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > colWidths[i] {
+				colWidths[i] = len(cell)
+			}
+		}
+	}
+
+	var sb strings.Builder
+	for rowIdx, row := range rows {
+		// Pad each cell
+		cells := make([]string, len(row))
+		for i, cell := range row {
+			cells[i] = fmt.Sprintf("%-*s", colWidths[i], cell)
+		}
+		sb.WriteString(strings.Join(cells, " | "))
+		sb.WriteString("\n")
+		// Separator after header row
+		if rowIdx == 0 {
+			sepParts := make([]string, len(headers))
+			for i := range headers {
+				sepParts[i] = strings.Repeat("-", colWidths[i])
+			}
+			sb.WriteString(strings.Join(sepParts, "---"))
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// routeOutput handles all output routing for --parse-json and --parse-json-file results.
+// parseMaps is the slice of processed root objects.
+// generate is the --generate count (used to decide single-object vs array).
+// toStdout is "" | "as-json" | "as-csv".
+// toStdoutPrettify controls indented vs compact stdout output.
+// toJsonFileSet indicates --to-json-file was passed (even with empty value).
+// toJsonFileValue is the optional filename given with --to-json-file.
+// source is "parse-json" or "parse-json-file".
+// defaultFilePath is the full default output path (used when source is "parse-json-file" and no explicit filename was given).
+// out is the writer for stdout.
+func routeOutput(
+	parseMaps []map[string]any,
+	generate int,
+	toStdout string,
+	toStdoutPrettify bool,
+	toJsonFileSet bool,
+	toJsonFileValue string,
+	source string,
+	defaultFilePath string,
+	out io.Writer,
+) error {
+	// Determine the data shape
+	var data any
+	if generate == 1 {
+		data = parseMaps[0]
+	} else {
+		data = parseMaps
+	}
+
+	// Stdout output
+	if toStdout != "" {
+		switch toStdout {
+		case "as-json":
+			var jsonBytes []byte
+			var err error
+			if toStdoutPrettify {
+				jsonBytes, err = json.MarshalIndent(data, "", "  ")
+			} else {
+				jsonBytes, err = json.Marshal(data)
+			}
+			if err != nil {
+				return fmt.Errorf("error marshalling JSON for stdout: %w", err)
+			}
+			fmt.Fprintf(out, "%s\n", jsonBytes)
+		case "as-csv":
+			csvStr, err := marshalAsCSV(parseMaps, toStdoutPrettify)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "%s\n", csvStr)
+		}
+	}
+
+	// File output
+	if toJsonFileSet {
+		var resolvedPath string
+		switch {
+		case toJsonFileValue != "" && toJsonFileValue != "_use_default_":
+			resolvedPath = toJsonFileValue
+		case source == "parse-json-file":
+			resolvedPath = defaultFilePath
+		default:
+			// source == "parse-json": use output.json beside the binary
+			dir, err := executableDir()
+			if err != nil {
+				return err
+			}
+			resolvedPath = filepath.Join(dir, "output.json")
+		}
+
+		// Delete any existing file at that path
+		_ = os.Remove(resolvedPath)
+
+		// Files are always pretty-printed for readability
+		jsonBytes, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			return fmt.Errorf("error marshalling JSON for file: %w", err)
+		}
+
+		if err = os.WriteFile(resolvedPath, jsonBytes, 0644); err != nil {
+			return fmt.Errorf("failed to write result to '%s': %w", resolvedPath, err)
+		}
+	}
+
+	return nil
 }
