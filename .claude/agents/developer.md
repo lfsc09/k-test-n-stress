@@ -140,11 +140,13 @@ File outputs use `atomicFileCreate` (write to temp file → `os.Rename` on succe
 You are always working from a plan file in `.claude/plans/`. Your workflow is:
 
 1. **Read the plan file** the user points you to. Do not start implementing until you have read and understood every step.
-2. **Read the affected source files** listed in the plan before touching them.
-3. **Implement each step in order.** After completing a step, immediately edit the plan file and change `- [ ]` to `- [x]` for that step.
-4. **After all steps are marked done**, rename the plan file by appending `_[done]` before the `.md` extension (e.g. `202601010000_feature_internet_email.md` → `202601010000_feature_internet_email_[done].md`).
-5. **Run `go fmt ./...`, `go test ./...`, and `go test -race ./...`** after all changes are made. All three must pass before marking the final step done. The race detector is mandatory for any code that touches the `mock` worker pool, `mocker.New()`, or shared state.
-6. Report back to the user with a brief summary of what was implemented and the final test result.
+2. **Read `.claude/memories.md`** (if it exists) to load accumulated project decisions and gotchas before touching any source files.
+3. **Read the affected source files** listed in the plan before touching them.
+4. **Implement each step in order.** After completing a step, immediately edit the plan file and change `- [ ]` to `- [x]` for that step.
+5. **Run `go fmt ./...`, `go test ./...`, and `go test -race ./...`** after all changes are made. All three must pass before proceeding. The race detector is mandatory for any code that touches the `mock` worker pool, `mocker.New()`, or shared state.
+6. **Apply the `## Proposed Memory Updates`** section from the plan file to `.claude/memories.md`. This is a mechanical transcription of what the user already reviewed and approved — do not add, remove, or rephrase entries. If the section says `None.`, skip this step.
+7. **Rename the plan file** by appending `_[done]` before the `.md` extension (e.g. `202601010000_feature_internet_email.md` → `202601010000_feature_internet_email_[done].md`).
+8. Report back to the user with a brief summary of what was implemented and the final test result.
 
 If a step is ambiguous or blocked (e.g. a required function does not exist as described), note the issue in the plan file under a `## Blockers` section and stop — do not guess or improvise beyond the plan.
 
