@@ -22,6 +22,8 @@
 
 ## Known Gotchas
 
+- **`Generate` param-guard pattern** — any `Generate` case that reads `functionParams[0]` must first check `len(functionParams) == 0 || functionParams[0] == ""` and return `fmt.Errorf(...)`. The canonical example is `Regex.regex` (line 392). Empty braces `{}` produce `functionParams[0] = ""`, which is treated the same as "no parameter supplied".
+- **`Number.number` uses `m.rng.Float64()`** — after the Bug 2 fix, `Number.number` no longer calls `jaswdrFaker.Float64`. It computes `min + m.rng.Float64()*(max-min)` and formats with `strconv.FormatFloat(..., 'f', decimals, 64)`. `min`/`max` are kept as `float64` throughout; no `int()` truncation.
 - **`extractMockMethod` bare-token error** — any parameter after the function name that is not wrapped in `{…}` or `/…/` is an error, detected via the `inBare` flag. The function name itself (before the first `:`) is always bare and is exempt.
 - **`interpretString` vs `processStr`** — `interpretString` only matches a value that is *entirely* `{{ … }}` (used in JSON map processing). `processStr` handles inline expressions mixed with literal text (used in `--parse-str`).
 - **Map iteration order is non-deterministic** — `processJsonMap` snapshots `objKeys` before iterating so key deletion/addition during the loop does not cause issues. `sanitizeJsonMap` does the same.
@@ -82,6 +84,7 @@
 
 | Plan | Date | Type |
 | --- | --- | --- |
+| `202604131357_bug_paramguard_number_truncation_interface` | 2026-04-13 | bug |
 | `202604101540_feature_mock_concurrency` | 2026-04-10 | feature |
 | `202604101112_feature_to_csv_file` | 2026-04-10 | feature |
 | `202604101057_refactor_remove_progress_bar` | 2026-04-10 | refactor |

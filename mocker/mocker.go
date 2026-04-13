@@ -15,11 +15,6 @@ import (
 	regen "github.com/zach-klippenstein/goregen"
 )
 
-type Mocker interface {
-	List(out io.Writer)
-	Generate(mockFunction string, functionParams []string) (string, error)
-}
-
 // mockerSeedCounter provides monotonically-increasing offsets so concurrent
 // New() calls never collide on the same UnixNano value.
 var mockerSeedCounter atomic.Int64
@@ -195,9 +190,12 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	case "Boolean.boolean":
 		return strconv.FormatBool(m.jaswdrFaker.Boolean().Bool()), nil
 	case "Boolean.booleanWithChance":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Boolean.booleanWithChance: 'chance' parameter is required")
+		}
 		chance, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strconv.FormatBool(m.jaswdrFaker.Boolean().Bool()), nil
+			return "", fmt.Errorf("Boolean.booleanWithChance: 'chance' must be an integer, got %q", functionParams[0])
 		}
 		return strconv.FormatBool(m.jaswdrFaker.Boolean().BoolWithChance(chance)), nil
 	/*
@@ -283,35 +281,50 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		LOREM
 	*/
 	case "Lorem.paragraph":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Lorem.paragraph: 'sentences' parameter is required")
+		}
 		sentences, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return m.jaswdrFaker.Lorem().Paragraph(1), nil
+			return "", fmt.Errorf("Lorem.paragraph: 'sentences' must be an integer, got %q", functionParams[0])
 		}
 		return m.jaswdrFaker.Lorem().Paragraph(sentences), nil
 	case "Lorem.paragraphs":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Lorem.paragraphs: 'paragraphs' parameter is required")
+		}
 		paragraphs, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.jaswdrFaker.Lorem().Paragraphs(1), ""), nil
+			return "", fmt.Errorf("Lorem.paragraphs: 'paragraphs' must be an integer, got %q", functionParams[0])
 		}
 		return strings.Join(m.jaswdrFaker.Lorem().Paragraphs(paragraphs), "\n"), nil
 	case "Lorem.sentence":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Lorem.sentence: 'words' parameter is required")
+		}
 		words, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return m.jaswdrFaker.Lorem().Sentence(1), nil
+			return "", fmt.Errorf("Lorem.sentence: 'words' must be an integer, got %q", functionParams[0])
 		}
 		return m.jaswdrFaker.Lorem().Sentence(words), nil
 	case "Lorem.sentences":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Lorem.sentences: 'sentences' parameter is required")
+		}
 		sentences, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.jaswdrFaker.Lorem().Sentences(1), ""), nil
+			return "", fmt.Errorf("Lorem.sentences: 'sentences' must be an integer, got %q", functionParams[0])
 		}
 		return strings.Join(m.jaswdrFaker.Lorem().Sentences(sentences), "\n"), nil
 	case "Lorem.word":
 		return m.jaswdrFaker.Lorem().Word(), nil
 	case "Lorem.words":
+		if len(functionParams) == 0 || functionParams[0] == "" {
+			return "", fmt.Errorf("Lorem.words: 'words' parameter is required")
+		}
 		words, err := strconv.Atoi(functionParams[0])
 		if err != nil {
-			return strings.Join(m.jaswdrFaker.Lorem().Words(1), ""), nil
+			return "", fmt.Errorf("Lorem.words: 'words' must be an integer, got %q", functionParams[0])
 		}
 		return strings.Join(m.jaswdrFaker.Lorem().Words(words), " "), nil
 	/*
@@ -322,15 +335,36 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		min := -1000.0
 		max := 1000.0
 		if len(functionParams) > 0 && functionParams[0] != "" {
-			decimals, _ = strconv.Atoi(functionParams[0])
+			v, err := strconv.Atoi(functionParams[0])
+			if err != nil {
+				return "", fmt.Errorf("Number.number: 'decimals' must be an integer, got %q", functionParams[0])
+			}
+			decimals = v
 		}
 		if len(functionParams) > 1 && functionParams[1] != "" {
-			min, _ = strconv.ParseFloat(functionParams[1], 64)
+			v, err := strconv.ParseFloat(functionParams[1], 64)
+			if err != nil {
+				return "", fmt.Errorf("Number.number: 'min' must be a number, got %q", functionParams[1])
+			}
+			min = v
 		}
 		if len(functionParams) > 2 && functionParams[2] != "" {
-			max, _ = strconv.ParseFloat(functionParams[2], 64)
+			v, err := strconv.ParseFloat(functionParams[2], 64)
+			if err != nil {
+				return "", fmt.Errorf("Number.number: 'max' must be a number, got %q", functionParams[2])
+			}
+			max = v
 		}
-		return strconv.FormatFloat(m.jaswdrFaker.Float64(decimals, int(min), int(max)), 'f', decimals, 64), nil
+		if max < min {
+			return "", fmt.Errorf("Number.number: 'max' (%v) must be >= 'min' (%v)", max, min)
+		}
+		var value float64
+		if max == min {
+			value = min
+		} else {
+			value = min + m.rng.Float64()*(max-min)
+		}
+		return strconv.FormatFloat(value, 'f', decimals, 64), nil
 	/*
 		PAYMENT
 	*/

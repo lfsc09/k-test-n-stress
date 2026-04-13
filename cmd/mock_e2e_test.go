@@ -689,17 +689,18 @@ func (suite *MockNumberSuite) TestNumberNumber() {
 	positiveIntRe := regexp.MustCompile(`^\d+\n$`)
 
 	tests := []struct {
-		testName string
-		template string
-		assertRe *regexp.Regexp
-		checkMin int
-		checkMax int
+		testName       string
+		template       string
+		assertRe       *regexp.Regexp
+		assertContains string
+		checkMin       int
+		checkMax       int
 	}{
 		{testName: "no params (defaults)", template: "{{ Number.number }}", assertRe: intOrFloatRe},
 		{testName: "empty decimals (default 0)", template: "{{ Number.number:{} }}", assertRe: intRe},
 		{testName: "decimals=2", template: "{{ Number.number:{2} }}", assertRe: twoDecimalRe},
 		{testName: "decimals=2, min and max empty (defaults)", template: "{{ Number.number:{2}:{}:{} }}", assertRe: twoDecimalRe},
-		{testName: "non-numeric decimals (ignored, defaults to 0)", template: "{{ Number.number:{abc} }}", assertRe: intRe},
+		{testName: "non-numeric decimals (error, inlined)", template: "{{ Number.number:{abc} }}", assertContains: "[Number.number: 'decimals' must be an integer"},
 		{testName: "three bare colons (all defaults)", template: "{{ Number.number::: }}", assertRe: intRe},
 		{testName: "decimals=0, min=1, max=10", template: "{{ Number.number:{0}:{1}:{10} }}", assertRe: positiveIntRe, checkMin: 1, checkMax: 10},
 	}
@@ -707,14 +708,18 @@ func (suite *MockNumberSuite) TestNumberNumber() {
 	for _, tt := range tests {
 		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
 		assert.NoError(suite.T(), err, tt.testName)
-		assert.Regexp(suite.T(), tt.assertRe, stdOut, tt.testName)
-		if tt.checkMin != 0 || tt.checkMax != 0 {
-			trimmed := regexp.MustCompile(`\n$`).ReplaceAllString(stdOut, "")
-			var n int
-			_, scanErr := fmt.Sscanf(trimmed, "%d", &n)
-			assert.NoError(suite.T(), scanErr, tt.testName)
-			assert.GreaterOrEqual(suite.T(), n, tt.checkMin, tt.testName)
-			assert.LessOrEqual(suite.T(), n, tt.checkMax, tt.testName)
+		if tt.assertContains != "" {
+			assert.Contains(suite.T(), stdOut, tt.assertContains, tt.testName)
+		} else {
+			assert.Regexp(suite.T(), tt.assertRe, stdOut, tt.testName)
+			if tt.checkMin != 0 || tt.checkMax != 0 {
+				trimmed := regexp.MustCompile(`\n$`).ReplaceAllString(stdOut, "")
+				var n int
+				_, scanErr := fmt.Sscanf(trimmed, "%d", &n)
+				assert.NoError(suite.T(), scanErr, tt.testName)
+				assert.GreaterOrEqual(suite.T(), n, tt.checkMin, tt.testName)
+				assert.LessOrEqual(suite.T(), n, tt.checkMax, tt.testName)
+			}
 		}
 	}
 }
@@ -738,28 +743,26 @@ func (suite *MockBooleanSuite) executeCommand(args ...string) (string, error) {
 }
 
 func (suite *MockBooleanSuite) TestBooleanBooleanWithChance() {
-	boolRe := regexp.MustCompile(`^(true|false)\n$`)
-
 	tests := []struct {
-		testName    string
-		template    string
-		assertRe    *regexp.Regexp
-		exactOutput string
+		testName       string
+		template       string
+		exactOutput    string
+		assertContains string
 	}{
 		{testName: "chance = 100", template: "{{ Boolean.booleanWithChance:{100} }}", exactOutput: "true\n"},
 		{testName: "chance = 0", template: "{{ Boolean.booleanWithChance:{0} }}", exactOutput: "false\n"},
-		{testName: "chance empty (fallback random bool)", template: "{{ Boolean.booleanWithChance:{} }}", assertRe: boolRe},
-		{testName: "chance non-numeric (fallback random bool)", template: "{{ Boolean.booleanWithChance:{abc} }}", assertRe: boolRe},
-		// TODO: known panic if no param supplied — see bug_loremboolean_no_param_guard
+		{testName: "chance empty (error, inlined)", template: "{{ Boolean.booleanWithChance:{} }}", assertContains: "[Boolean.booleanWithChance: 'chance' parameter is required"},
+		{testName: "chance non-numeric (error, inlined)", template: "{{ Boolean.booleanWithChance:{abc} }}", assertContains: "[Boolean.booleanWithChance: 'chance' must be an integer"},
+		{testName: "no param (error, inlined)", template: "{{ Boolean.booleanWithChance }}", assertContains: "[Boolean.booleanWithChance: 'chance' parameter is required"},
 	}
 
 	for _, tt := range tests {
 		stdOut, err := suite.executeCommand("mock", "--parse-str", tt.template)
 		assert.NoError(suite.T(), err, tt.testName)
-		if tt.exactOutput != "" {
+		if tt.assertContains != "" {
+			assert.Contains(suite.T(), stdOut, tt.assertContains, tt.testName)
+		} else if tt.exactOutput != "" {
 			assert.Equal(suite.T(), tt.exactOutput, stdOut, tt.testName)
-		} else {
-			assert.Regexp(suite.T(), tt.assertRe, stdOut, tt.testName)
 		}
 	}
 }
@@ -788,16 +791,24 @@ func (suite *MockLoremSuite) TestLorem() {
 		template       string
 		assertNonEmpty bool
 		assertContains string
-		// TODO: known panic if no param supplied — see bug_loremboolean_no_param_guard
 	}{
 		{testName: "paragraph default (1 sentence)", template: "{{ Lorem.paragraph:{1} }}", assertNonEmpty: true},
 		{testName: "paragraph N=3", template: "{{ Lorem.paragraph:{3} }}", assertNonEmpty: true},
-		{testName: "paragraph empty param (fallback)", template: "{{ Lorem.paragraph:{} }}", assertNonEmpty: true},
+		{testName: "paragraph empty param (error, inlined)", template: "{{ Lorem.paragraph:{} }}", assertContains: "[Lorem.paragraph: 'sentences' parameter is required"},
 		{testName: "paragraphs N=2", template: "{{ Lorem.paragraphs:{2} }}", assertContains: "\n"},
 		{testName: "sentence N=5", template: "{{ Lorem.sentence:{5} }}", assertNonEmpty: true},
 		{testName: "sentences N=3", template: "{{ Lorem.sentences:{3} }}", assertContains: "\n"},
 		{testName: "word (no params)", template: "{{ Lorem.word }}", assertNonEmpty: true},
 		{testName: "words N=4", template: "{{ Lorem.words:{4} }}", assertNonEmpty: true},
+		{testName: "paragraph no param (error, inlined)", template: "{{ Lorem.paragraph }}", assertContains: "[Lorem.paragraph: 'sentences' parameter is required"},
+		{testName: "paragraphs no param (error, inlined)", template: "{{ Lorem.paragraphs }}", assertContains: "[Lorem.paragraphs: 'paragraphs' parameter is required"},
+		{testName: "sentence no param (error, inlined)", template: "{{ Lorem.sentence }}", assertContains: "[Lorem.sentence: 'words' parameter is required"},
+		{testName: "sentences no param (error, inlined)", template: "{{ Lorem.sentences }}", assertContains: "[Lorem.sentences: 'sentences' parameter is required"},
+		{testName: "words no param (error, inlined)", template: "{{ Lorem.words }}", assertContains: "[Lorem.words: 'words' parameter is required"},
+		{testName: "paragraphs empty param (error, inlined)", template: "{{ Lorem.paragraphs:{} }}", assertContains: "[Lorem.paragraphs: 'paragraphs' parameter is required"},
+		{testName: "sentence empty param (error, inlined)", template: "{{ Lorem.sentence:{} }}", assertContains: "[Lorem.sentence: 'words' parameter is required"},
+		{testName: "sentences empty param (error, inlined)", template: "{{ Lorem.sentences:{} }}", assertContains: "[Lorem.sentences: 'sentences' parameter is required"},
+		{testName: "words empty param (error, inlined)", template: "{{ Lorem.words:{} }}", assertContains: "[Lorem.words: 'words' parameter is required"},
 	}
 
 	for _, tt := range tests {
