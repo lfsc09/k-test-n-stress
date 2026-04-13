@@ -19,7 +19,7 @@ type MockCmdE2ETestSuite struct {
 	suite.Suite
 }
 
-func TestMockCmdTestSuite(t *testing.T) {
+func TestMockCmdE2ESuite(t *testing.T) {
 	suite.Run(t, new(MockCmdE2ETestSuite))
 }
 
@@ -111,6 +111,17 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagInvalidVal
 		assert.Error(suite.T(), err, test.testName)
 		assert.EqualError(suite.T(), err, "--generate option must be greater than 0", test.testName)
 	}
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_GenerateFlagExceedsMax() {
+	testName := "--generate above 10,000,000 should return an error"
+	_, err := suite.executeCommand(
+		"mock", "--parse-json", `{"name": "{{ Person.name }}"}`,
+		"--generate", "10000001",
+		"--to-stdout", "as-json",
+	)
+	assert.Error(suite.T(), err, testName)
+	assert.Contains(suite.T(), err.Error(), "must not exceed", testName)
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldReturnListOfMockFunctions() {
@@ -524,6 +535,86 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputBothJsonAndCsvFile() {
 	assert.NoError(suite.T(), jsonErr, testName)
 	_, csvErr := os.Stat(csvPath)
 	assert.NoError(suite.T(), csvErr, testName)
+}
+
+// --- Concurrent path (--generate >= 10000) ---
+
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrentPath_JsonOutput_CorrectCount() {
+	testName := "Concurrent path: JSON file contains exactly 10001 items"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.json")
+	_, err := suite.executeCommand(
+		"mock", "--parse-json", `{"name": "{{ Person.name }}"}`,
+		"--generate", "10001",
+		"--to-json-file="+outPath,
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+
+	var result []map[string]any
+	jsonErr := json.Unmarshal(data, &result)
+	assert.NoError(suite.T(), jsonErr, testName)
+	assert.Len(suite.T(), result, 10001, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrentPath_CsvOutput_NoDuplicateHeader() {
+	testName := "Concurrent path: CSV file has exactly one header row and 10001 data rows"
+	tmpDir := suite.T().TempDir()
+	outPath := filepath.Join(tmpDir, "result.csv")
+	_, err := suite.executeCommand(
+		"mock", "--parse-json", `{"name": "{{ Person.name }}"}`,
+		"--generate", "10001",
+		"--to-csv-file="+outPath,
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	data, readErr := os.ReadFile(outPath)
+	assert.NoError(suite.T(), readErr, testName)
+
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// Exactly 1 header + 10001 data rows = 10002 lines total
+	assert.Len(suite.T(), lines, 10002, testName)
+	// First line must be the header
+	assert.Equal(suite.T(), "name", lines[0], testName)
+	// Second line must NOT equal the header (would indicate duplicate)
+	if len(lines) > 1 {
+		assert.NotEqual(suite.T(), "name", lines[1], testName)
+	}
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrentPath_StdoutJson_CorrectStructure() {
+	testName := "Concurrent path: stdout JSON is a valid array with 10001 elements"
+	stdOut, err := suite.executeCommand(
+		"mock", "--parse-json", `{"name": "{{ Person.name }}"}`,
+		"--generate", "10001",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	var result []map[string]any
+	jsonErr := json.Unmarshal([]byte(strings.TrimSpace(stdOut)), &result)
+	assert.NoError(suite.T(), jsonErr, testName)
+	assert.Len(suite.T(), result, 10001, testName)
+}
+
+func (suite *MockCmdE2ETestSuite) TestCLIConcurrentPath_StdoutCsv_NoDuplicateHeader() {
+	testName := "Concurrent path: stdout CSV has exactly one header row and 10001 data rows"
+	stdOut, err := suite.executeCommand(
+		"mock", "--parse-json", `{"name": "{{ Person.name }}"}`,
+		"--generate", "10001",
+		"--to-stdout", "as-csv",
+	)
+	assert.NoError(suite.T(), err, testName)
+
+	lines := strings.Split(strings.TrimRight(stdOut, "\n"), "\n")
+	// Exactly 1 header + 10001 data rows = 10002 lines total
+	assert.Len(suite.T(), lines, 10002, testName)
+	assert.Equal(suite.T(), "name", lines[0], testName)
+	if len(lines) > 1 {
+		assert.NotEqual(suite.T(), "name", lines[1], testName)
+	}
 }
 
 type MockDateSuite struct {

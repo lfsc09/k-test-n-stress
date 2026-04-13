@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -52,7 +53,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			}
 
 			// Mock Url params if present
-			urlStr = processStr(urlStr, mocker)
+			urlStr = processStr(urlStr, mocker, os.Stderr)
 
 			// Parse the URL
 			parsedUrl, err := url.Parse(urlStr)
@@ -66,7 +67,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				parts := strings.SplitN(queryParam, "=", 2)
 				if len(parts) == 2 {
 					key := strings.TrimSpace(parts[0])
-					value := processStr(strings.TrimSpace(parts[1]), mocker)
+					value := processStr(strings.TrimSpace(parts[1]), mocker, os.Stderr)
 					query.Add(key, value)
 				}
 			}

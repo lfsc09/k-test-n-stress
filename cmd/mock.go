@@ -27,6 +27,12 @@ import (
 
 var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
+// interpretStringRegex matches a value that is entirely {{ … }}.
+var interpretStringRegex = regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
+
+// bracketCharRegex detects any '[' or ']' character in a key string.
+var bracketCharRegex = regexp.MustCompile(`[\[\]]`)
+
 // SplitPoint describes where the worker pool will chunk generation work.
 type SplitPoint struct {
 	// Depth is 0 for a root-level split (--generate count), >0 for an inner [n] key.
@@ -474,6 +480,11 @@ Examples:
 				return fmt.Errorf("--generate option must be greater than 0")
 			}
 
+			const maxGenerate = 10_000_000
+			if generate > maxGenerate {
+				return fmt.Errorf("--generate option must not exceed %d", maxGenerate)
+			}
+
 			// Validate --parse-json-file filename constraint
 			if runningParseJsonFile && !strings.HasSuffix(filepath.Base(parseJsonFile), ".template.json") {
 				return fmt.Errorf("--parse-json-file requires the template filename to end with '.template.json', got '%s'", filepath.Base(parseJsonFile))
@@ -502,7 +513,7 @@ Examples:
 			if runningParseStr {
 				// Process the string
 				mocker := mocker.New()
-				mockedStr := processStr(parseStr, mocker)
+				mockedStr := processStr(parseStr, mocker, os.Stderr)
 
 				// Print the mocked string to STDOUT
 				fmt.Fprintf(opts.Out, "%s\n", mockedStr)
@@ -722,8 +733,7 @@ func interpretString(rawValue string) (string, bool) {
 		return "", false
 	}
 
-	re := regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
-	matches := re.FindStringSubmatch(rawValue)
+	matches := interpretStringRegex.FindStringSubmatch(rawValue)
 
 	if len(matches) > 0 {
 		return strings.TrimSpace(matches[1]), true
@@ -853,6 +863,15 @@ func sanitizeJsonMap(parseMap map[string]any) {
 			sanitizeJsonMap(mapValue)
 		}
 
+		// Recurse into array elements that are maps
+		if sliceValue, ok := objValue.([]any); ok {
+			for _, elem := range sliceValue {
+				if elemMap, ok := elem.(map[string]any); ok {
+					sanitizeJsonMap(elemMap)
+				}
+			}
+		}
+
 		if sanitizedKey != objKey {
 			parseMap[sanitizedKey] = objValue
 			delete(parseMap, objKey)
@@ -865,7 +884,7 @@ func sanitizeJsonMap(parseMap map[string]any) {
 // If not, it returns the original string.
 // Mock function calls are delimited by {{ and }} where }} is always the closing
 // delimiter — single } inside the content (e.g. inside {value} param tokens) is allowed.
-func processStr(parseStr string, mocker *mocker.Mock) string {
+func processStr(parseStr string, mocker *mocker.Mock, errOut io.Writer) string {
 	var out strings.Builder
 	s := parseStr
 	for {
@@ -899,10 +918,12 @@ func processStr(parseStr string, mocker *mocker.Mock) string {
 
 		functionName, params, err := extractMockMethod(inner)
 		if err != nil {
+			fmt.Fprintf(errOut, "warning: --parse-str mock substitution error: %v\n", err)
 			out.WriteString(fmt.Sprintf("[%v]", err))
 		} else {
 			mockValue, err := mocker.Generate(functionName, params)
 			if err != nil {
+				fmt.Fprintf(errOut, "warning: --parse-str mock substitution error: %v\n", err)
 				out.WriteString(fmt.Sprintf("[%v]", err))
 			} else {
 				out.WriteString(mockValue)
@@ -923,7 +944,7 @@ func extractDigitInBrackets(place string, str string) (int, error) {
 	matches := objKeyNumberRegex.FindStringSubmatch(str)
 
 	if len(matches) != 2 {
-		if !regexp.MustCompile(`[\[\]]`).MatchString(str) {
+		if !bracketCharRegex.MatchString(str) {
 			return 1, nil
 		}
 		return 0, fmt.Errorf("invalid format '%s' (must be 'text[digit]')", str)
@@ -1320,18 +1341,6 @@ func streamOutput(
 
 		// CSV file
 		if csvFileWriter != nil {
-			if len(csvHeaders) == 0 {
-				for k := range item {
-					csvHeaders = append(csvHeaders, k)
-				}
-				sort.Strings(csvHeaders)
-			}
-			// Write header on first item for CSV file too (stdout CSV and file may share headers)
-			if firstItem && csvFileWriter != nil {
-				if err := csvFileWriter.Write(csvHeaders); err != nil {
-					return err
-				}
-			}
 			row := make([]string, len(csvHeaders))
 			for i, h := range csvHeaders {
 				if val, ok := item[h]; ok {

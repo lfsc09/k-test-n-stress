@@ -14,7 +14,7 @@ type MockCmdTestSuite struct {
 	suite.Suite
 }
 
-func TestMockCmdTestSuite(t *testing.T) {
+func TestMockCmdUnitSuite(t *testing.T) {
 	suite.Run(t, new(MockCmdTestSuite))
 }
 
@@ -826,6 +826,51 @@ func (suite *MockCmdTestSuite) TestExtractCsvHeaders() {
 	for _, tt := range tests {
 		headers := extractCsvHeaders(tt.template)
 		assert.Equal(suite.T(), tt.want, headers, "Test case '%s'", tt.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestSanitizeJsonMap_ArrayRecursion() {
+	tests := []struct {
+		testName string
+		input    map[string]any
+		wantKeys []string // top-level keys expected after sanitization
+	}{
+		{
+			testName: "array of maps with bracketed keys inside",
+			input: map[string]any{
+				"outer[2]": []any{
+					map[string]any{"inner[3]": "value1"},
+					map[string]any{"inner[3]": "value2"},
+				},
+			},
+			wantKeys: []string{"outer"},
+		},
+		{
+			testName: "flat array of strings is unaffected",
+			input: map[string]any{
+				"phones[3]": []any{"111", "222", "333"},
+			},
+			wantKeys: []string{"phones"},
+		},
+	}
+
+	for _, tt := range tests {
+		sanitizeJsonMap(tt.input)
+		for _, wantKey := range tt.wantKeys {
+			_, ok := tt.input[wantKey]
+			assert.True(suite.T(), ok, "Test case '%s': expected key '%s' after sanitization", tt.testName, wantKey)
+		}
+		// Verify array elements also have sanitized keys
+		if tt.testName == "array of maps with bracketed keys inside" {
+			arr := tt.input["outer"].([]any)
+			for i, elem := range arr {
+				elemMap := elem.(map[string]any)
+				_, hasUnsanitized := elemMap["inner[3]"]
+				assert.False(suite.T(), hasUnsanitized, "Test case '%s': element %d still has unsanitized key", tt.testName, i)
+				_, hasSanitized := elemMap["inner"]
+				assert.True(suite.T(), hasSanitized, "Test case '%s': element %d missing sanitized key", tt.testName, i)
+			}
+		}
 	}
 }
 
