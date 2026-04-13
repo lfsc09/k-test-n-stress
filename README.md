@@ -626,7 +626,7 @@ go mod tidy
 
 ## LLM Development
 
-This project uses a two-agent pipeline for LLM-assisted development. Plan files live in `.claude/plans/` and serve as the documentation trail for every feature, bug fix, and refactor.
+This project uses a three-agent system for LLM-assisted development. Plan files live in `.claude/plans/` and serve as the documentation trail for every feature, bug fix, and refactor. Audit reports live in `.claude/reports/`.
 
 ### Agents
 
@@ -634,6 +634,7 @@ This project uses a two-agent pipeline for LLM-assisted development. Plan files 
 | -- | -- | -- |
 | `planner` | `.claude/agents/planner.md` | Reads the codebase and writes a detailed step-by-step plan to `.claude/plans/`. Does **not** write code. |
 | `developer` | `.claude/agents/developer.md` | Reads a plan file, implements every step, marks each step done, and renames the file with a `_[done]` suffix when finished. |
+| `auditor` | `.claude/agents/auditor.md` | Independently audits the full codebase for correctness, security, architecture, performance, tests, and documentation. Writes a dated report to `.claude/reports/`. Does **not** modify any files. |
 
 ### Pipeline
 
@@ -658,6 +659,29 @@ All plan files are prefixed with the datetime at creation time (`YYYYMMDDhhmm`):
 - New features: `YYYYMMDDhhmm_feature_<short_name>.md` → `YYYYMMDDhhmm_feature_<short_name>_[done].md`
 - Bug fixes: `YYYYMMDDhhmm_bug_<short_name>.md` → `YYYYMMDDhhmm_bug_<short_name>_[done].md`
 - Refactors: `YYYYMMDDhhmm_refactor_<short_name>.md` → `YYYYMMDDhhmm_refactor_<short_name>_[done].md`
+
+### Audit pipeline
+
+The auditor runs independently of the planner/developer cycle. Invoke it at any point to get an objective snapshot of the project's health. Audit reports are written to `.claude/reports/` and are intended for human review — each finding can then be handed to the planner as a specific task.
+
+```
+1. You ask the auditor to audit the project
+          ↓
+2. auditor reads .claude/memories.md and all source files,
+   then writes .claude/reports/YYYYMMDDhhmm_audit.md
+          ↓
+3. You review the report and decide which findings to act on
+          ↓
+4. You describe each chosen finding to the planner as a task
+          ↓
+5. planner → developer → done  (normal pipeline)
+```
+
+### Audit report naming
+
+Audit reports are prefixed with the datetime at creation time:
+
+- `YYYYMMDDhhmm_audit.md`
 
 ### Examples
 
@@ -702,4 +726,28 @@ All plan files are prefixed with the datetime at creation time (`YYYYMMDDhhmm`):
 
 "Implement .claude/plans/202604091530_feature_internet_email.md"
 → developer implements the updated plan
+```
+
+#### Auditing the codebase
+
+```
+"Audit the project"
+→ auditor reads all source files and .claude/memories.md,
+  writes .claude/reports/202604131200_audit.md
+```
+
+```
+"Run an audit and generate a report"
+→ same as above — a new dated report is always created
+```
+
+After reviewing the report:
+
+```
+// C1 finding in the report: path traversal in --to-json-file
+"Plan a fix for the path traversal vulnerability in --to-json-file"
+→ planner writes .claude/plans/202604131210_bug_path_traversal_json_file.md
+
+"Implement .claude/plans/202604131210_bug_path_traversal_json_file.md"
+→ developer implements and renames to …_[done].md
 ```
