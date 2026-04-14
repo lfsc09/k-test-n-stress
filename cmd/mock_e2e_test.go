@@ -1307,6 +1307,114 @@ func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_LargeGenerateToJsonFile() {
 	}
 }
 
+// TestCLI_InnerSplit_ConcurrentPath exercises templates with inner [n] keys.
+func (suite *MockCmdE2ETestSuite) TestCLI_InnerSplit_ConcurrentPath() {
+	// Test 1: employees[200] with generate=1 — TotalWeight=200 < threshold, sequential path.
+	// Verifies correct shape regardless of code path.
+	t1Name := "inner [n] map template generate=1 as-json (sequential path)"
+	stdOut, err := suite.executeCommand(
+		"mock",
+		"--parse-json", `{"employees[200]":{"name":"{{ Person.name }}"}}`,
+		"--generate", "1",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, t1Name)
+	trimmed := strings.TrimSpace(stdOut)
+	var result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &result), t1Name)
+	// Top-level is a bare object (generate == 1).
+	assert.Contains(suite.T(), result, "employees", t1Name)
+	empArr, ok := result["employees"].([]any)
+	assert.True(suite.T(), ok, t1Name+": employees is not an array")
+	assert.Len(suite.T(), empArr, 200, t1Name)
+	for i, elem := range empArr {
+		elemMap, ok := elem.(map[string]any)
+		assert.True(suite.T(), ok, fmt.Sprintf("%s: element %d is not a map", t1Name, i))
+		name, _ := elemMap["name"].(string)
+		assert.NotEmpty(suite.T(), name, fmt.Sprintf("%s: element %d name is empty", t1Name, i))
+	}
+
+	// Test 2: employees[200] with generate=1 as-csv.
+	t2Name := "inner [n] map template generate=1 as-csv (sequential path)"
+	stdOut, err = suite.executeCommand(
+		"mock",
+		"--parse-json", `{"employees[200]":{"name":"{{ Person.name }}"}}`,
+		"--generate", "1",
+		"--to-stdout", "as-csv",
+	)
+	assert.NoError(suite.T(), err, t2Name)
+	trimmed = strings.TrimSpace(stdOut)
+	lines := strings.Split(trimmed, "\n")
+	// Header row + at least 1 data row
+	assert.GreaterOrEqual(suite.T(), len(lines), 2, t2Name)
+	assert.Contains(suite.T(), lines[0], "employees", t2Name)
+
+	// Test 3: tags[15000] string value with generate=1 — string inner, falls back to root split.
+	// TotalWeight=15000 >= threshold, so concurrent root split (1 worker).
+	t3Name := "inner [n] string template generate=1 as-json (root split fallback)"
+	stdOut, err = suite.executeCommand(
+		"mock",
+		"--parse-json", `{"tags[15000]":"{{ UUID.uuidv4 }}"}`,
+		"--generate", "1",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, t3Name)
+	trimmed = strings.TrimSpace(stdOut)
+	var t3Result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &t3Result), t3Name)
+	tagsArr, ok := t3Result["tags"].([]any)
+	assert.True(suite.T(), ok, t3Name+": tags is not an array")
+	assert.Len(suite.T(), tagsArr, 15000, t3Name)
+	for _, tag := range tagsArr {
+		tagStr, ok := tag.(string)
+		assert.True(suite.T(), ok, t3Name+": tag is not a string")
+		assert.NotEmpty(suite.T(), tagStr, t3Name+": tag is empty")
+	}
+
+	// Test 4: items[5] with generate=3 — TotalWeight=3*5=15 < threshold, sequential path.
+	// Output must be an array of 3 root objects each with items[5].
+	t4Name := "inner [n] template generate=3 as-json (sequential, below threshold)"
+	stdOut, err = suite.executeCommand(
+		"mock",
+		"--parse-json", `{"items[5]":{"id":"{{ UUID.uuidv4 }}"}}`,
+		"--generate", "3",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, t4Name)
+	trimmed = strings.TrimSpace(stdOut)
+	var t4Result []map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &t4Result), t4Name)
+	assert.Len(suite.T(), t4Result, 3, t4Name)
+	for i, obj := range t4Result {
+		itemsArr, ok := obj["items"].([]any)
+		assert.True(suite.T(), ok, fmt.Sprintf("%s: object %d items is not an array", t4Name, i))
+		assert.Len(suite.T(), itemsArr, 5, fmt.Sprintf("%s: object %d items count", t4Name, i))
+	}
+
+	// Test 5: employees[15000] with generate=1 — TotalWeight=15000 >= threshold, concurrent inner split.
+	t5Name := "inner [n] map template generate=1 as-json (concurrent inner split)"
+	stdOut, err = suite.executeCommand(
+		"mock",
+		"--parse-json", `{"employees[15000]":{"name":"{{ Person.name }}"}}`,
+		"--generate", "1",
+		"--to-stdout", "as-json",
+	)
+	assert.NoError(suite.T(), err, t5Name)
+	trimmed = strings.TrimSpace(stdOut)
+	var t5Result map[string]any
+	assert.NoError(suite.T(), json.Unmarshal([]byte(trimmed), &t5Result), t5Name)
+	assert.Contains(suite.T(), t5Result, "employees", t5Name)
+	emp5Arr, ok := t5Result["employees"].([]any)
+	assert.True(suite.T(), ok, t5Name+": employees is not an array")
+	assert.Len(suite.T(), emp5Arr, 15000, t5Name)
+	for i, elem := range emp5Arr {
+		elemMap, ok := elem.(map[string]any)
+		assert.True(suite.T(), ok, fmt.Sprintf("%s: element %d is not a map", t5Name, i))
+		name, _ := elemMap["name"].(string)
+		assert.NotEmpty(suite.T(), name, fmt.Sprintf("%s: element %d name is empty", t5Name, i))
+	}
+}
+
 // TestCLIConcurrent_DebugFlagSucceeds verifies that --debug does not corrupt stdout
 // output and the command still succeeds.
 func (suite *MockCmdE2ETestSuite) TestCLIConcurrent_DebugFlagSucceeds() {

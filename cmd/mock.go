@@ -148,16 +148,65 @@ func analyzeTemplate(parseMap map[string]any, generate int, numWorkers int) Spli
 		}
 	}
 
-	// TODO(concurrency): inner split — for depth > 0 the worker pool would need to
-	// extract the sub-template at the split key and reassemble results into the parent
-	// map. For the initial delivery, fall back to root split for all inner splits.
+	// Inner split is only supported for generate == 1.
+	// When generate > 1, fall back to root split so the existing --generate chunking
+	// still parallelizes work across root objects.
+	// TODO(concurrency-generate-gt1-inner-split): implement inner split for generate > 1.
+	if generate > 1 {
+		innerWeight := int64(1)
+		for _, n := range nodes {
+			innerWeight *= int64(n.count)
+		}
+		totalWeight := int64(generate) * innerWeight
+		return SplitPoint{
+			Depth:         0,
+			KeyPath:       "",
+			Count:         generate,
+			InnerWeight:   innerWeight,
+			TotalWeight:   totalWeight,
+			UseSequential: totalWeight < concurrencyThreshold,
+		}
+	}
+
+	// Inner split (depth > 0, generate == 1): parallelize across the items in the
+	// inner [n] array identified by splitNode.
+	//
+	// Only supported when:
+	//   - splitDepth == 1 (direct child of root map), so the key lookup is O(1).
+	//   - The value at the split key is a map[string]any (object template).
+	//
+	// When either condition is false, fall back to root split.
+	//
+	// TODO(concurrency-siblings): only the first qualifying sibling at splitDepth is
+	// used as the split node. Multiple [n] keys at the same depth are handled by
+	// picking this one; the others fall inside the worker's sequential processing.
+	// Full sibling-sequential pool dispatch is deferred to a follow-on plan.
+	if splitDepth == 1 {
+		if _, isMap := parseMap[splitNode.keyPath].(map[string]any); isMap {
+			innerWeight := int64(1)
+			for _, n := range nodes {
+				if n.depth > splitDepth {
+					innerWeight *= int64(n.count)
+				}
+			}
+			totalWeight := int64(generate) * int64(splitNode.count) * innerWeight
+			return SplitPoint{
+				Depth:         splitDepth,
+				KeyPath:       splitNode.keyPath,
+				Count:         splitNode.count,
+				InnerWeight:   innerWeight,
+				TotalWeight:   totalWeight,
+				UseSequential: totalWeight < concurrencyThreshold,
+			}
+		}
+	}
+
+	// Fallback to root split (splitDepth > 1 or non-map inner value).
 	innerWeight := int64(1)
 	for _, n := range nodes {
 		innerWeight *= int64(n.count)
 	}
 	totalWeight := int64(generate) * innerWeight
-	_ = splitNode // will be used when inner split is implemented
-
 	return SplitPoint{
 		Depth:         0,
 		KeyPath:       "",
@@ -190,14 +239,32 @@ type RunStats struct {
 	BytesWritten atomic.Int64 // incremented by writer goroutine per write
 }
 
-// runWorkerPool starts numWorkers goroutines, dispatches WorkUnits for the root
-// split (depth 0), and closes results when all workers complete. The caller must
-// read from results until it is closed.
+// runWorkerPool starts numWorkers goroutines, dispatches WorkUnits for either a
+// root split (splitPoint.Depth == 0) or an inner [n] key split
+// (splitPoint.Depth > 0), and closes results when all workers complete. The
+// caller must read from results until it is closed.
 //
-// For inner splits (splitPoint.Depth > 0) the function currently falls back to
-// sequential dispatch via a single goroutine. TODO(concurrency): implement true
-// inner split once the root split path is validated in production.
+// For root splits: each WorkUnit covers a range of root objects (generate count).
+// For inner splits: each WorkUnit covers a range of inner-array items. The parent
+// map (all keys except the split key) is processed once sequentially and stored in
+// splitPoint; the writer (streamOutput) reassembles the final object.
 func runWorkerPool(
+	ctx context.Context,
+	splitPoint SplitPoint,
+	template map[string]any,
+	numWorkers int,
+	results chan<- []map[string]any,
+	stats *RunStats,
+) error {
+	if splitPoint.Depth == 0 {
+		return runWorkerPoolRoot(ctx, splitPoint, template, numWorkers, results, stats)
+	}
+	return runWorkerPoolInner(ctx, splitPoint, template, numWorkers, results, stats)
+}
+
+// runWorkerPoolRoot handles the root-split (Depth == 0) worker pool path.
+// Each worker generates complete root objects independently.
+func runWorkerPoolRoot(
 	ctx context.Context,
 	splitPoint SplitPoint,
 	template map[string]any,
@@ -215,9 +282,7 @@ func runWorkerPool(
 
 	var wg sync.WaitGroup
 	for range numWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			workerMocker := mocker.New()
 			for unit := range jobs {
 				batch := make([]map[string]any, 0, unit.endIdx-unit.startIdx)
@@ -242,17 +307,14 @@ func runWorkerPool(
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	// Dispatch WorkUnits
 	total := splitPoint.Count
 	start := 0
 	for start < total {
-		end := start + subBatchSize
-		if end > total {
-			end = total
-		}
+		end := min(start+subBatchSize, total)
 		unit := WorkUnit{
 			startIdx:         start,
 			endIdx:           end,
@@ -277,6 +339,163 @@ func runWorkerPool(
 	}()
 
 	// Collect first error (if any) — wait for errCh to be closed
+	var firstErr error
+	for err := range errCh {
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// runWorkerPoolInner handles the inner-split (Depth > 0) worker pool path.
+//
+// The parent map (all keys except the split key) is processed once sequentially
+// here. Workers generate only the inner-array items identified by splitPoint.KeyPath.
+// The writer (streamOutput) receives sub-batches of inner items and reassembles the
+// final parent object after all inner items have been received.
+//
+// Memory note: the inner array is buffered in the writer until all sub-batches
+// arrive. For very large inner arrays this is O(inner_count × item_size).
+// TODO(concurrency-inner-streaming): eliminate the buffer for large inner arrays.
+func runWorkerPoolInner(
+	ctx context.Context,
+	splitPoint SplitPoint,
+	template map[string]any,
+	numWorkers int,
+	results chan<- []map[string]any,
+	stats *RunStats,
+) error {
+	// Extract the inner sub-template (value at the split key — already verified to be
+	// a map[string]any by analyzeTemplate).
+	subTemplate, ok := template[splitPoint.KeyPath].(map[string]any)
+	if !ok {
+		// Defensive: should not happen given analyzeTemplate's guard.
+		close(results)
+		return fmt.Errorf("inner split key '%s' does not hold a map value", splitPoint.KeyPath)
+	}
+
+	// Process the parent map once, sequentially — all keys except the split key.
+	// We deep-copy the template to avoid mutating the caller's map, then temporarily
+	// remove the split key so processJsonMap does not expand it.
+	parentCopy := deepcopy.Copy(template).(map[string]any)
+	delete(parentCopy, splitPoint.KeyPath)
+	parentMocker := mocker.New()
+	if err := processJsonMap(parentCopy, parentMocker); err != nil {
+		close(results)
+		return fmt.Errorf("error processing parent context for inner split: %w", err)
+	}
+	// Note: sanitizeJsonMap on parentCopy is deferred to streamOutput so it runs
+	// after the inner array is assembled into the parent map.
+
+	// Store the processed parent context in splitPoint for streamOutput to use.
+	// splitPoint is passed by value to streamOutput, so we embed the context there
+	// via the exported ParentCtx field (added below in the SplitPoint struct).
+	// We send it through the dedicated channel instead to avoid changing SplitPoint.
+	// See streamOutput for the assembly step.
+	//
+	// Here we simply store the parentCopy in a local variable and pass it via closure
+	// to the goroutine that closes results — but streamOutput also needs it.
+	// The cleanest approach: send one sentinel batch containing the parent context first,
+	// then send inner batches. streamOutput checks a flag in the SplitPoint to know
+	// the first batch is the parent.
+	//
+	// For the first delivery we extend SplitPoint with ParentCtx to carry this.
+	// This avoids an additional channel or complex sequencing.
+	//
+	// The field is set here and read in streamOutput. Since runWorkerPool returns
+	// before streamOutput reads it (they run concurrently via poolWg), we rely on
+	// the happens-before guarantee of the channel send/receive to synchronise:
+	// workers send to results, streamOutput reads from results. The parentCopy is
+	// set in splitPoint before any sends to results, so it is visible to streamOutput.
+	//
+	// HOWEVER: splitPoint is passed by VALUE to both runWorkerPool and streamOutput
+	// at the call site in runConcurrent. Setting a field here would not propagate
+	// to the streamOutput call. We therefore use a different mechanism:
+	// send the parentCopy as the very first batch (a single-element batch).
+	// streamOutput identifies it via splitPoint.Depth > 0 and treats the first
+	// received batch as the parent context, not inner items.
+	//
+	// The parent context batch uses a reserved key "_ktns_parent_ctx_" as the sole
+	// map entry to distinguish it from inner item batches.
+	const parentCtxKey = "_ktns_parent_ctx_"
+	parentCtxBatch := []map[string]any{
+		{parentCtxKey: parentCopy},
+	}
+	select {
+	case results <- parentCtxBatch:
+	case <-ctx.Done():
+		close(results)
+		return ctx.Err()
+	}
+
+	subBatchSize := targetSubBatch
+	if splitPoint.InnerWeight > 1 {
+		subBatchSize = max(1, targetSubBatch/int(splitPoint.InnerWeight))
+	}
+
+	jobs := make(chan WorkUnit, numWorkers)
+	errCh := make(chan error, numWorkers)
+
+	var wg sync.WaitGroup
+	for range numWorkers {
+		wg.Go(func() {
+			workerMocker := mocker.New()
+			for unit := range jobs {
+				batch := make([]map[string]any, 0, unit.endIdx-unit.startIdx)
+				for i := unit.startIdx; i < unit.endIdx; i++ {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					cp := deepcopy.Copy(unit.templateSnapshot).(map[string]any)
+					if err := processJsonMap(cp, workerMocker); err != nil {
+						errCh <- err
+						return
+					}
+					sanitizeJsonMap(cp)
+					batch = append(batch, cp)
+					stats.Generated.Add(1)
+				}
+				select {
+				case results <- batch:
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
+	}
+
+	// Dispatch WorkUnits for the inner array range.
+	total := splitPoint.Count
+	start := 0
+	for start < total {
+		end := min(start+subBatchSize, total)
+		unit := WorkUnit{
+			startIdx:         start,
+			endIdx:           end,
+			templateSnapshot: subTemplate,
+		}
+		select {
+		case jobs <- unit:
+		case <-ctx.Done():
+		}
+		start = end
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	close(jobs)
+
+	// Wait for all workers to finish, then close results.
+	go func() {
+		wg.Wait()
+		close(results)
+		close(errCh)
+	}()
+
+	// Collect first error (if any) — wait for errCh to be closed.
 	var firstErr error
 	for err := range errCh {
 		if firstErr == nil {
@@ -534,7 +753,8 @@ Examples:
 						if err := processJsonMap(cpParseMap, mockerInst); err != nil {
 							return fmt.Errorf("%w", err)
 						}
-						parseMaps[i] = deepcopy.Copy(cpParseMap).(map[string]any)
+						// processJsonMap mutates cpParseMap in place; no second deep copy needed.
+						parseMaps[i] = cpParseMap
 					}
 					for i := range parseMaps {
 						sanitizeJsonMap(parseMaps[i])
@@ -574,7 +794,7 @@ Examples:
 				}()
 
 				// streamOutput blocks until results channel is closed by runWorkerPool
-				streamErr := streamOutput(ctx, results, generate, toStdout, toStdoutPrettify, toJsonFileSet, jsonPath, toCsvFileSet, csvPath, stats, opts.Out)
+				streamErr := streamOutput(ctx, results, generate, toStdout, toStdoutPrettify, toJsonFileSet, jsonPath, toCsvFileSet, csvPath, splitPoint, stats, opts.Out)
 
 				poolWg.Wait()
 
@@ -1151,6 +1371,11 @@ func extractCsvHeaders(template map[string]any) []string {
 // streamOutput reads sub-batches from results and writes them to all configured sinks
 // (stdout JSON, stdout CSV, JSON file, CSV file). It terminates when results is closed.
 // On context cancellation, any in-progress temp files are aborted.
+//
+// When splitPoint.Depth > 0 (inner split), the first received batch is a sentinel
+// containing the partially-processed parent context (key "_ktns_parent_ctx_"). All
+// subsequent batches are inner-array items that are accumulated and assembled into
+// the parent before a single root write.
 func streamOutput(
 	ctx context.Context,
 	results <-chan []map[string]any,
@@ -1161,6 +1386,7 @@ func streamOutput(
 	jsonPath string,
 	toCsvFileSet bool,
 	csvPath string,
+	splitPoint SplitPoint,
 	stats *RunStats,
 	out io.Writer,
 ) error {
@@ -1340,6 +1566,8 @@ func streamOutput(
 		}
 
 		// CSV file
+		// TODO(debug-csv-bytes): BytesWritten is only tracked for JSON file output.
+		// CSV file byte tracking would require a counting writer wrapper around csvFileBuf.
 		if csvFileWriter != nil {
 			row := make([]string, len(csvHeaders))
 			for i, h := range csvHeaders {
@@ -1358,43 +1586,135 @@ func streamOutput(
 	// Track whether any header has been written to CSV sinks
 	csvHeaderWritten := false
 
-	for batch := range results {
-		select {
-		case <-ctx.Done():
+	// Inner-split path: accumulate inner-array items and assemble the final root object.
+	// Workers send a sentinel batch first (carrying the parent context), followed by
+	// sub-batches of inner-array items. After all items are received the writer
+	// assembles the final object, sanitizes it, and writes it once.
+	//
+	// Memory note: the entire inner array is buffered here until all sub-batches
+	// arrive (O(inner_count × item_size)).
+	// TODO(concurrency-inner-streaming): eliminate the buffer for large inner arrays.
+	if splitPoint.Depth > 0 {
+		const parentCtxKey = "_ktns_parent_ctx_"
+		cleanKey := sanitizeKeyWithBrackets(splitPoint.KeyPath)
+
+		// Receive the parent context from the first batch (sentinel).
+		var parentCtx map[string]any
+		for firstBatch := range results {
+			select {
+			case <-ctx.Done():
+				// drain the channel
+				for range results {
+				}
+				abortAll()
+				return ctx.Err()
+			default:
+			}
+			if len(firstBatch) == 1 {
+				if nested, ok := firstBatch[0][parentCtxKey]; ok {
+					if m, ok := nested.(map[string]any); ok {
+						parentCtx = m
+						break
+					}
+				}
+			}
+			// If for some reason the sentinel is not the first batch, treat as error.
 			abortAll()
-			return ctx.Err()
-		default:
+			return fmt.Errorf("inner split: expected parent context sentinel as first batch")
+		}
+		if parentCtx == nil {
+			abortAll()
+			return fmt.Errorf("inner split: parent context sentinel not received")
 		}
 
-		for _, item := range batch {
-			sep := !firstItem
-
-			// Write CSV headers on very first item if not already done
-			if firstItem && (stdoutCsvWriter != nil || csvFileWriter != nil) && !csvHeaderWritten {
-				for k := range item {
-					csvHeaders = append(csvHeaders, k)
+		// Accumulate all inner-array items from subsequent batches.
+		var innerSlice []any
+		for batch := range results {
+			select {
+			case <-ctx.Done():
+				for range results {
 				}
-				sort.Strings(csvHeaders)
-				csvHeaderWritten = true
-				if stdoutCsvWriter != nil {
-					if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
-						abortAll()
-						return err
-					}
-				}
-				if csvFileWriter != nil {
-					if err := csvFileWriter.Write(csvHeaders); err != nil {
-						abortAll()
-						return err
-					}
-				}
-			}
-
-			if err := writeItem(item, sep); err != nil {
 				abortAll()
-				return fmt.Errorf("error writing output: %w", err)
+				return ctx.Err()
+			default:
 			}
-			firstItem = false
+			for _, item := range batch {
+				innerSlice = append(innerSlice, item)
+			}
+		}
+
+		// Assemble the final root object and sanitize it.
+		parentCtx[splitPoint.KeyPath] = innerSlice // use raw bracket key — sanitizeJsonMap will rename it
+		sanitizeJsonMap(parentCtx)
+		// parentCtx[cleanKey] now holds the assembled inner slice.
+		_ = cleanKey // used implicitly via sanitizeJsonMap renaming
+
+		// Write CSV headers from the assembled parent object if needed.
+		if (stdoutCsvWriter != nil || csvFileWriter != nil) && !csvHeaderWritten {
+			for k := range parentCtx {
+				csvHeaders = append(csvHeaders, k)
+			}
+			sort.Strings(csvHeaders)
+			csvHeaderWritten = true
+			if stdoutCsvWriter != nil {
+				if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
+					abortAll()
+					return err
+				}
+			}
+			if csvFileWriter != nil {
+				if err := csvFileWriter.Write(csvHeaders); err != nil {
+					abortAll()
+					return err
+				}
+			}
+		}
+
+		// Write the assembled root object (always a bare object since generate == 1).
+		if err := writeItem(parentCtx, false); err != nil {
+			abortAll()
+			return fmt.Errorf("error writing inner-split output: %w", err)
+		}
+	} else {
+		// Root-split path: each received item is a complete root object.
+		for batch := range results {
+			select {
+			case <-ctx.Done():
+				abortAll()
+				return ctx.Err()
+			default:
+			}
+
+			for _, item := range batch {
+				sep := !firstItem
+
+				// Write CSV headers on very first item if not already done
+				if firstItem && (stdoutCsvWriter != nil || csvFileWriter != nil) && !csvHeaderWritten {
+					for k := range item {
+						csvHeaders = append(csvHeaders, k)
+					}
+					sort.Strings(csvHeaders)
+					csvHeaderWritten = true
+					if stdoutCsvWriter != nil {
+						if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
+							abortAll()
+							return err
+						}
+					}
+					if csvFileWriter != nil {
+						if err := csvFileWriter.Write(csvHeaders); err != nil {
+							abortAll()
+							return err
+						}
+					}
+				}
+
+				if err := writeItem(item, sep); err != nil {
+					abortAll()
+					return fmt.Errorf("error writing output: %w", err)
+				}
+				firstItem = false
+			}
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/mocker"
+	"github.com/mohae/deepcopy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -583,19 +584,36 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 			wantMinWeight: 50000,
 		},
 		{
-			testName: "inner bracket key n=100000 qualifies, falls back to root split",
+			// With generate==1 and count >= numWorkers, analyzeTemplate now returns an
+			// inner split (Depth=1) rather than falling back to root.
+			testName: "inner bracket key n=100000 with generate=1 uses inner split",
 			parseMap: map[string]any{
 				"employees[100000]": map[string]any{"name": "{{ Person.name }}"},
 			},
 			generate:      1,
 			numWorkers:    8,
 			wantSeq:       false,
-			wantCount:     1, // root split count = generate
+			wantCount:     100000, // inner split count = splitNode.count
+			wantDepth:     1,
+			wantMinWeight: 100000,
+		},
+		{
+			// generate > 1 with inner [n] keys falls back to root split.
+			testName: "inner bracket key n=100000 with generate=2 falls back to root split",
+			parseMap: map[string]any{
+				"employees[100000]": map[string]any{"name": "{{ Person.name }}"},
+			},
+			generate:      2,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     2, // root split count = generate
 			wantDepth:     0,
 			wantMinWeight: 100000, // innerWeight includes the [n] key
 		},
 		{
-			testName: "nested n keys at different depths — first qualifying chosen, falls back to root",
+			// generate==1: outer[20000] at depth 1 is the split node; inner[5000] at depth 2
+			// contributes to innerWeight.
+			testName: "nested n keys at different depths — inner split at shallowest with generate=1",
 			parseMap: map[string]any{
 				"outer[20000]": map[string]any{
 					"inner[5000]": map[string]any{"name": "{{ Person.name }}"},
@@ -604,12 +622,29 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 			generate:      1,
 			numWorkers:    8,
 			wantSeq:       false,
-			wantCount:     1,
+			wantCount:     20000, // inner split count = splitNode.count
+			wantDepth:     1,
+			wantMinWeight: 20000 * 5000, // Count * InnerWeight
+		},
+		{
+			// generate > 1 with nested [n] keys falls back to root split.
+			testName: "nested n keys at different depths — falls back to root with generate=2",
+			parseMap: map[string]any{
+				"outer[20000]": map[string]any{
+					"inner[5000]": map[string]any{"name": "{{ Person.name }}"},
+				},
+			},
+			generate:      2,
+			numWorkers:    8,
+			wantSeq:       false,
+			wantCount:     2,
 			wantDepth:     0,
 			wantMinWeight: 20000 * 5000, // product of both
 		},
 		{
-			testName: "sibling n keys at same depth — both counted in innerWeight",
+			// generate==1 with two siblings at depth 1: first qualifying sibling is the
+			// split node; the other contributes to sibling sequential processing.
+			testName: "sibling n keys at same depth with generate=1 uses inner split on first",
 			parseMap: map[string]any{
 				"truck[10000]": map[string]any{"model": "{{ Car.model }}"},
 				"car[10000]":   map[string]any{"model": "{{ Car.model }}"},
@@ -617,9 +652,9 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 			generate:      1,
 			numWorkers:    8,
 			wantSeq:       false,
-			wantCount:     1,
-			wantDepth:     0,
-			wantMinWeight: 10000 * 10000,
+			wantCount:     10000, // inner split count = splitNode.count
+			wantDepth:     1,
+			wantMinWeight: 10000, // only nodes below splitDepth count in innerWeight
 		},
 		{
 			testName: "all n nodes below numWorkers threshold — sequential via totalWeight",
@@ -663,6 +698,102 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 		if !tt.wantSeq {
 			assert.GreaterOrEqual(suite.T(), sp.TotalWeight, tt.wantMinWeight, "Test case '%s': TotalWeight", tt.testName)
 		}
+	}
+}
+
+func (suite *MockCmdTestSuite) TestAnalyzeTemplate_InnerSplit() {
+	tests := []struct {
+		testName        string
+		parseMap        map[string]any
+		generate        int
+		numWorkers      int
+		wantDepth       int
+		wantCount       int
+		wantInnerWeight int64
+		wantTotalWeight int64
+		wantSeq         bool
+	}{
+		{
+			// employees[20] at depth 1, count >= numWorkers=4, no nested [n] keys.
+			testName: "one inner [n] key at depth 1 above numWorkers",
+			parseMap: map[string]any{
+				"employees[20]": map[string]any{"name": "{{ Person.name }}"},
+			},
+			generate:        1,
+			numWorkers:      4,
+			wantDepth:       1,
+			wantCount:       20,
+			wantInnerWeight: 1,
+			wantTotalWeight: 20,   // 1 * 20 * 1
+			wantSeq:         true, // 20 < 10000
+		},
+		{
+			// employees[20] at depth 1 with nested phones[5] at depth 2.
+			testName: "inner [n] at depth 1 with nested [n] at depth 2",
+			parseMap: map[string]any{
+				"employees[20]": map[string]any{
+					"phones[5]": "{{ Person.phoneNumber }}",
+				},
+			},
+			generate:        1,
+			numWorkers:      4,
+			wantDepth:       1,
+			wantCount:       20,
+			wantInnerWeight: 5,
+			wantTotalWeight: 100,  // 1 * 20 * 5
+			wantSeq:         true, // 100 < 10000
+		},
+		{
+			// company[2] at depth 1, count < numWorkers=8 → splitDepth==-1 → root split.
+			testName: "root [n] key count below numWorkers falls back to root split",
+			parseMap: map[string]any{
+				"company[2]": map[string]any{"name": "{{ Company.name }}"},
+			},
+			generate:        1,
+			numWorkers:      8,
+			wantDepth:       0,
+			wantCount:       1,
+			wantInnerWeight: 2,
+			wantTotalWeight: 2, // 1 * 1 * 2 (root split innerWeight product = 2)
+			wantSeq:         true,
+		},
+		{
+			// No [n] keys at all → root split, generate=1.
+			testName: "no [n] keys uses root split",
+			parseMap: map[string]any{
+				"name": "{{ Person.name }}",
+			},
+			generate:        1,
+			numWorkers:      8,
+			wantDepth:       0,
+			wantCount:       1,
+			wantInnerWeight: 1,
+			wantTotalWeight: 1,
+			wantSeq:         true,
+		},
+		{
+			// large inner array: employees[20000] → totalWeight = 20000 >= 10000.
+			testName: "inner split is concurrent when totalWeight at threshold",
+			parseMap: map[string]any{
+				"employees[20000]": map[string]any{"name": "{{ Person.name }}"},
+			},
+			generate:        1,
+			numWorkers:      4,
+			wantDepth:       1,
+			wantCount:       20000,
+			wantInnerWeight: 1,
+			wantTotalWeight: 20000,
+			wantSeq:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		sp := analyzeTemplate(tt.parseMap, tt.generate, tt.numWorkers)
+		assert.Equal(suite.T(), tt.wantDepth, sp.Depth, "Test case '%s': Depth", tt.testName)
+		assert.Equal(suite.T(), tt.wantCount, sp.Count, "Test case '%s': Count", tt.testName)
+		assert.Equal(suite.T(), tt.wantInnerWeight, sp.InnerWeight, "Test case '%s': InnerWeight", tt.testName)
+		assert.Equal(suite.T(), tt.wantTotalWeight, sp.TotalWeight, "Test case '%s': TotalWeight", tt.testName)
+		assert.Equal(suite.T(), tt.wantSeq, sp.UseSequential, "Test case '%s': UseSequential", tt.testName)
 	}
 }
 
@@ -914,4 +1045,39 @@ func (suite *MockCmdTestSuite) TestAtomicFileCreate_AbortCleansUp() {
 	// Final file must NOT exist
 	_, err = os.Stat(finalPath)
 	assert.True(suite.T(), os.IsNotExist(err), "final file must not exist after abort")
+}
+
+// BenchmarkDeepCopyTemplate measures the reflection cost of deepcopy.Copy for a
+// representative nested template. Run with:
+//
+//	go test -bench=BenchmarkDeepCopyTemplate -benchmem ./cmd/
+//
+// If ns/op is high (>5000 per iteration), consider a hand-rolled clone.
+// TODO(deepcopy-hand-rolled): replace deepcopy.Copy with a type-aware clone for
+// map[string]any templates — see concurrency-brainstorm.md for the trade-offs.
+func BenchmarkDeepCopyTemplate(b *testing.B) {
+	template := map[string]any{
+		"field1":  "{{ Person.name }}",
+		"field2":  "{{ Internet.email }}",
+		"field3":  "{{ UUID.uuidv4 }}",
+		"field4":  "{{ Address.city }}",
+		"field5":  "{{ Company.name }}",
+		"field6":  "{{ Number.number::{0}:{1}:{100} }}",
+		"field7":  "{{ Boolean.boolean }}",
+		"field8":  "{{ Date.date }}",
+		"field9":  "{{ Car.model }}",
+		"field10": "{{ Lorem.word }}",
+		"nested": map[string]any{
+			"sub1": "{{ Person.firstName }}",
+			"sub2": "{{ Person.lastName }}",
+			"sub3": "{{ Internet.url }}",
+			"sub4": "{{ UUID.uuidv4 }}",
+			"sub5": "{{ Address.postCode }}",
+		},
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		_ = deepcopy.Copy(template).(map[string]any)
+	}
 }

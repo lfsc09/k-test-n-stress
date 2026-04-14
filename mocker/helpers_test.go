@@ -1,6 +1,8 @@
 package mocker
 
 import (
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,40 @@ type MockerUtilsInternalTestSuite struct {
 
 func TestMockerUtilsInternalTestSuite(t *testing.T) {
 	suite.Run(t, new(MockerUtilsInternalTestSuite))
+}
+
+// TestMockerConcurrency_NoConcurrentStateSharing verifies that multiple goroutines
+// can call mocker.New() independently and use their own instance without data races.
+// Run with: go test -race ./mocker/
+func (suite *MockerUtilsInternalTestSuite) TestMockerConcurrency_NoConcurrentStateSharing() {
+	numGoroutines := runtime.NumCPU() * 2
+	errCh := make(chan error, numGoroutines)
+
+	var wg sync.WaitGroup
+	for range numGoroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m := New()
+			for range 500 {
+				if _, err := m.Generate("Person.cpf", nil); err != nil {
+					errCh <- err
+					return
+				}
+				if _, err := m.Generate("Payment.creditCardCvv", nil); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		assert.NoError(suite.T(), err)
+	}
 }
 
 func (suite *MockerUtilsInternalTestSuite) TestCalculateChecksum_ValidInputs() {

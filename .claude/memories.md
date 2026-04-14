@@ -4,7 +4,12 @@
 
 - **`Mock` is not goroutine-safe** — each goroutine must call `mocker.New()` independently; never share a `*Mock` across goroutines.
 - **Per-instance `*rand.Rand` seeding** — `mocker.New()` seeds with three XOR factors: `time.Now().UnixNano() ^ (int64(os.Getpid()) * 0x517cc1b727220a95) ^ (mockerSeedCounter.Add(1) * -7046029254386353131)`. The last factor uses the Fibonacci hashing multiplier (`-7046029254386353131` = `0x9e3779b97f4a7c15` signed). `mockerSeedCounter` is a package-level `atomic.Int64`.
-- **Worker pool always falls back to root split** — inner split (depth > 0) is a `TODO(concurrency)`. `analyzeTemplate` returns `Depth: 0` for all cases today. The `splitNode` variable is retained but unused (`_ = splitNode`).
+- **Inner split for `[n]` keys is implemented for `generate == 1` only** — when `generate > 1` with inner `[n]` keys, `analyzeTemplate` returns `Depth: 0` (root split) as a fallback. See `TODO(concurrency-generate-gt1-inner-split)` in `cmd/mock.go`.
+- **Inner split buffers the inner array in the writer** — `streamOutput` accumulates all inner-array sub-batches before writing the parent object when `splitPoint.Depth > 0`. This is O(inner_count × item_size) memory. See `TODO(concurrency-inner-streaming)` in `cmd/mock.go`.
+- **Sibling `[n]` keys at the same depth**: only the first qualifying sibling is used as the split node; the others fall inside the worker's sequential processing. Full sibling-sequential pool dispatch is deferred (`TODO(concurrency-siblings)`).
+- **`streamOutput` now accepts a `SplitPoint` parameter** — replaces the previous implicit assumption that all results are complete root objects.
+- **Inner split only supports map[string]any values at depth 1** — `analyzeTemplate` checks that the split key's value is a `map[string]any` and that `splitDepth == 1`. String values and depth > 1 nodes fall back to root split.
+- **Inner split sentinel batch** — `runWorkerPoolInner` sends one sentinel batch first containing `{"_ktns_parent_ctx_": parentCopy}`. `streamOutput` receives this as the parent context and all subsequent batches as inner-array items to assemble.
 - **`_use_default_` sentinel for optional-value flags** — `--to-json-file` and `--to-csv-file` use `NoOptDefVal = "_use_default_"` so the flag can be passed without a value. Wherever you see `toJsonFileValue != "" && toJsonFileValue != "_use_default_"`, that is the explicit-filename branch. Do NOT replace this with a simple empty-string check.
 - **`generate == 1` produces a bare object, not a single-element array** — both `routeOutput` (sequential) and `streamOutput` (concurrent) have explicit `generate == 1` branches that omit the wrapping `[…]`. Both paths must stay consistent.
 - **Atomic file writes** — `atomicFileCreate` writes to a temp file in the same directory as the destination (same-filesystem requirement for `os.Rename`), then renames on success or deletes on error. All file sinks go through this.
@@ -49,7 +54,9 @@
 | `mock --to-csv-file [filename]` | Done |
 | `mock --debug` (live stderr progress) | Done |
 | Worker pool concurrency (root split only) | Done |
-| Inner split for depth > 0 `[n]` keys | TODO — see `TODO(concurrency)` markers in `cmd/mock.go` |
+| Inner split for depth > 0 `[n]` keys (`generate == 1`) | Done (after this plan) |
+| Inner split for depth > 0 `[n]` keys (`generate > 1`) | TODO — `TODO(concurrency-generate-gt1-inner-split)` |
+| Sibling `[n]` keys sequential pool dispatch | TODO — `TODO(concurrency-siblings)` |
 | `request` command | Partially implemented (flags exist, logic in `cmd/request.go`) |
 | `stress` command | Not yet implemented |
 
@@ -84,6 +91,7 @@
 
 | Plan | Date | Type |
 | --- | --- | --- |
+| `202604131510_refactor_mock_concurrency` | 2026-04-13 | refactor |
 | `202604131357_bug_paramguard_number_truncation_interface` | 2026-04-13 | bug |
 | `202604101540_feature_mock_concurrency` | 2026-04-10 | feature |
 | `202604101112_feature_to_csv_file` | 2026-04-10 | feature |
