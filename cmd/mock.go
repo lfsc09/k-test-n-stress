@@ -37,15 +37,19 @@ var bracketCharRegex = regexp.MustCompile(`[\[\]]`)
 type SplitPoint struct {
 	// Depth is 0 for a root-level split (--generate count), >0 for an inner [n] key.
 	Depth int
-	// KeyPath is the dot-separated path to the split key for depth > 0 (e.g. "employees").
-	// Empty for depth-0 splits.
-	KeyPath string
-	// Count is the number of items at the split node (generate count or [n] value).
+	// KeyPaths holds all qualifying sibling keys at the split depth (empty for depth-0 splits).
+	KeyPaths []string
+	// ParentKeyPath holds path segments from root to the parent map that contains the
+	// split keys. Empty when split depth == 1 (keys are direct children of the root
+	// template map).
+	ParentKeyPath []string
+	// Count is the total number of items across all siblings at the split node
+	// (generate count for depth-0, sum of sibling [n] values for depth > 0).
 	Count int
 	// InnerWeight is the product of all [n] multipliers below the split point.
 	// For a leaf split, InnerWeight == 1.
 	InnerWeight int64
-	// TotalWeight == Count * InnerWeight
+	// TotalWeight == Count * InnerWeight (times generate for depth > 0)
 	TotalWeight int64
 	// UseSequential is true when TotalWeight < concurrencyThreshold; the caller
 	// should skip the worker pool and use the existing sequential path.
@@ -58,29 +62,87 @@ const estimatedItemBytes = 512      // rough estimate of bytes per generated ite
 
 // bracketNode records a [n] key found during template walk.
 type bracketNode struct {
-	depth   int
-	keyPath string
-	count   int
+	depth      int
+	keyPath    string
+	count      int
+	parentPath []string // path segments from root to the map that directly contains this key; empty at depth 1
 }
 
 // walkBracketCounts performs a depth-first walk of parseMap and returns all [n]
-// nodes found at each depth level.
-func walkBracketCounts(parseMap map[string]any, depth int) []bracketNode {
+// nodes found at each depth level. parentPath holds the path segments from root
+// to parseMap (empty for the root template map itself).
+func walkBracketCounts(parseMap map[string]any, depth int, parentPath []string) []bracketNode {
 	var nodes []bracketNode
 	for key, val := range parseMap {
 		matches := objKeyNumberRegex.FindStringSubmatch(key)
 		if len(matches) == 2 {
 			count, err := strconv.Atoi(matches[1])
 			if err == nil && count > 0 {
-				nodes = append(nodes, bracketNode{depth: depth, keyPath: key, count: count})
+				// Copy parentPath to prevent slice aliasing across nodes.
+				pp := append([]string(nil), parentPath...)
+				nodes = append(nodes, bracketNode{depth: depth, keyPath: key, count: count, parentPath: pp})
 			}
 		}
 		// Recurse into nested maps
 		if nested, ok := val.(map[string]any); ok {
-			nodes = append(nodes, walkBracketCounts(nested, depth+1)...)
+			nodes = append(nodes, walkBracketCounts(nested, depth+1, append(parentPath, key))...)
 		}
 	}
 	return nodes
+}
+
+// productOfCounts returns the product of n.count for every node in nodes.
+// Returns 1 for an empty slice.
+func productOfCounts(nodes []bracketNode) int64 {
+	product := int64(1)
+	for _, n := range nodes {
+		product *= int64(n.count)
+	}
+	return product
+}
+
+// productOfCountsBelow returns the product of n.count for every node whose depth
+// is strictly greater than depth. Returns 1 if no such nodes exist.
+func productOfCountsBelow(nodes []bracketNode, depth int) int64 {
+	product := int64(1)
+	for _, n := range nodes {
+		if n.depth > depth {
+			product *= int64(n.count)
+		}
+	}
+	return product
+}
+
+// navigateToMap walks root by following path segments in order and returns the
+// resulting map. Returns (nil, false) if any segment is missing or not a map.
+func navigateToMap(root map[string]any, path []string) (map[string]any, bool) {
+	cur := root
+	for _, seg := range path {
+		val, ok := cur[seg]
+		if !ok {
+			return nil, false
+		}
+		next, ok := val.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur = next
+	}
+	return cur, true
+}
+
+// buildRootSplit constructs a root-level SplitPoint (Depth == 0).
+func buildRootSplit(generate int, innerWeight int64) SplitPoint {
+	totalWeight := int64(generate) * innerWeight
+	return SplitPoint{
+		Depth:         0,
+		KeyPaths:      nil,
+		ParentKeyPath: nil,
+		Count:         generate,
+		InnerWeight:   innerWeight,
+		TotalWeight:   totalWeight,
+		UseSequential: totalWeight < concurrencyThreshold,
+	}
 }
 
 // analyzeTemplate walks the template tree once (depth-first) to determine the
@@ -88,23 +150,21 @@ func walkBracketCounts(parseMap map[string]any, depth int) []bracketNode {
 // where to parallelize work and whether the sequential path should be used
 // instead (when the total work item count is below concurrencyThreshold).
 func analyzeTemplate(parseMap map[string]any, generate int, numWorkers int) SplitPoint {
-	nodes := walkBracketCounts(parseMap, 1) // depth 1 = first level inside root
+	nodes := walkBracketCounts(parseMap, 1, nil) // depth 1 = first level inside root
 
+	// 1. No [n] keys — split at root (--generate count).
 	if len(nodes) == 0 {
-		// No [n] keys — split at root (--generate count)
-		innerWeight := int64(1)
-		totalWeight := int64(generate) * innerWeight
-		return SplitPoint{
-			Depth:         0,
-			KeyPath:       "",
-			Count:         generate,
-			InnerWeight:   innerWeight,
-			TotalWeight:   totalWeight,
-			UseSequential: totalWeight < concurrencyThreshold,
-		}
+		return buildRootSplit(generate, 1)
 	}
 
-	// Sort by depth ascending, then count descending
+	// 2. generate > 1 with inner [n] keys: fall back to root split.
+	// Inner split for generate > 1 is not yet implemented.
+	// TODO(concurrency-generate-gt1-inner-split): implement inner split for generate > 1.
+	if generate > 1 {
+		return buildRootSplit(generate, productOfCounts(nodes))
+	}
+
+	// 3. Sort by depth ascending, then count descending.
 	sort.Slice(nodes, func(i, j int) bool {
 		if nodes[i].depth != nodes[j].depth {
 			return nodes[i].depth < nodes[j].depth
@@ -112,7 +172,7 @@ func analyzeTemplate(parseMap map[string]any, generate int, numWorkers int) Spli
 		return nodes[i].count > nodes[j].count
 	})
 
-	// Find the shallowest depth where any node has count >= numWorkers
+	// 4. Find the shallowest depth where any node has count >= numWorkers.
 	splitDepth := -1
 	for _, n := range nodes {
 		if n.count >= numWorkers {
@@ -121,96 +181,68 @@ func analyzeTemplate(parseMap map[string]any, generate int, numWorkers int) Spli
 		}
 	}
 
+	// 5. No qualifying split depth — use root split.
 	if splitDepth == -1 {
-		// No [n] node has count >= numWorkers — use root split
-		// Compute innerWeight as product of all [n] counts in the tree
-		innerWeight := int64(1)
-		for _, n := range nodes {
-			innerWeight *= int64(n.count)
-		}
-		totalWeight := int64(generate) * innerWeight
-		return SplitPoint{
-			Depth:         0,
-			KeyPath:       "",
-			Count:         generate,
-			InnerWeight:   innerWeight,
-			TotalWeight:   totalWeight,
-			UseSequential: totalWeight < concurrencyThreshold,
-		}
+		return buildRootSplit(generate, productOfCounts(nodes))
 	}
 
-	// Find the qualifying node at the shallowest depth
-	var splitNode bracketNode
+	// 6. Collect all siblings at splitDepth with count >= numWorkers.
+	var siblings []bracketNode
 	for _, n := range nodes {
 		if n.depth == splitDepth && n.count >= numWorkers {
-			splitNode = n
-			break
+			siblings = append(siblings, n)
 		}
 	}
 
-	// Inner split is only supported for generate == 1.
-	// When generate > 1, fall back to root split so the existing --generate chunking
-	// still parallelizes work across root objects.
-	// TODO(concurrency-generate-gt1-inner-split): implement inner split for generate > 1.
-	if generate > 1 {
-		innerWeight := int64(1)
-		for _, n := range nodes {
-			innerWeight *= int64(n.count)
-		}
-		totalWeight := int64(generate) * innerWeight
-		return SplitPoint{
-			Depth:         0,
-			KeyPath:       "",
-			Count:         generate,
-			InnerWeight:   innerWeight,
-			TotalWeight:   totalWeight,
-			UseSequential: totalWeight < concurrencyThreshold,
-		}
+	if len(siblings) == 0 {
+		return buildRootSplit(generate, productOfCounts(nodes))
 	}
 
-	// Inner split (depth > 0, generate == 1): parallelize across the items in the
-	// inner [n] array identified by splitNode.
-	//
-	// Only supported when:
-	//   - splitDepth == 1 (direct child of root map), so the key lookup is O(1).
-	//   - The value at the split key is a map[string]any (object template).
-	//
-	// When either condition is false, fall back to root split.
-	//
-	// TODO(concurrency-siblings): only the first qualifying sibling at splitDepth is
-	// used as the split node. Multiple [n] keys at the same depth are handled by
-	// picking this one; the others fall inside the worker's sequential processing.
-	// Full sibling-sequential pool dispatch is deferred to a follow-on plan.
-	if splitDepth == 1 {
-		if _, isMap := parseMap[splitNode.keyPath].(map[string]any); isMap {
-			innerWeight := int64(1)
-			for _, n := range nodes {
-				if n.depth > splitDepth {
-					innerWeight *= int64(n.count)
-				}
-			}
-			totalWeight := int64(generate) * int64(splitNode.count) * innerWeight
-			return SplitPoint{
-				Depth:         splitDepth,
-				KeyPath:       splitNode.keyPath,
-				Count:         splitNode.count,
-				InnerWeight:   innerWeight,
-				TotalWeight:   totalWeight,
-				UseSequential: totalWeight < concurrencyThreshold,
+	// All siblings must share the same parentPath (same parent map).
+	// By construction this should always hold, but guard defensively.
+	for _, s := range siblings[1:] {
+		if len(s.parentPath) != len(siblings[0].parentPath) {
+			return buildRootSplit(generate, productOfCounts(nodes))
+		}
+		for i, seg := range s.parentPath {
+			if seg != siblings[0].parentPath[i] {
+				return buildRootSplit(generate, productOfCounts(nodes))
 			}
 		}
 	}
 
-	// Fallback to root split (splitDepth > 1 or non-map inner value).
-	innerWeight := int64(1)
-	for _, n := range nodes {
-		innerWeight *= int64(n.count)
+	// Navigate to the parent map that contains the sibling keys.
+	parentMap, ok := navigateToMap(parseMap, siblings[0].parentPath)
+	if !ok {
+		return buildRootSplit(generate, productOfCounts(nodes))
 	}
-	totalWeight := int64(generate) * innerWeight
+
+	// Validate that every sibling's value is a map[string]any (object template).
+	for _, s := range siblings {
+		if _, isMap := parentMap[s.keyPath].(map[string]any); !isMap {
+			return buildRootSplit(generate, productOfCounts(nodes))
+		}
+	}
+
+	// Compute the aggregated split metrics.
+	totalSiblingCount := 0
+	for _, s := range siblings {
+		totalSiblingCount += s.count
+	}
+	innerWeight := productOfCountsBelow(nodes, splitDepth)
+	totalWeight := int64(generate) * int64(totalSiblingCount) * innerWeight
+
+	// Build KeyPaths slice.
+	keyPaths := make([]string, len(siblings))
+	for i, s := range siblings {
+		keyPaths[i] = s.keyPath
+	}
+
 	return SplitPoint{
-		Depth:         0,
-		KeyPath:       "",
-		Count:         generate,
+		Depth:         splitDepth,
+		KeyPaths:      keyPaths,
+		ParentKeyPath: append([]string(nil), siblings[0].parentPath...),
+		Count:         totalSiblingCount,
 		InnerWeight:   innerWeight,
 		TotalWeight:   totalWeight,
 		UseSequential: totalWeight < concurrencyThreshold,
@@ -351,7 +383,7 @@ func runWorkerPoolRoot(
 // runWorkerPoolInner handles the inner-split (Depth > 0) worker pool path.
 //
 // The parent map (all keys except the split key) is processed once sequentially
-// here. Workers generate only the inner-array items identified by splitPoint.KeyPath.
+// here. Workers generate only the inner-array items identified by splitPoint.KeyPaths[0].
 // The writer (streamOutput) receives sub-batches of inner items and reassembles the
 // final parent object after all inner items have been received.
 //
@@ -366,20 +398,39 @@ func runWorkerPoolInner(
 	results chan<- []map[string]any,
 	stats *RunStats,
 ) error {
+	// Depth > 1 inner dispatch is not yet implemented. Fall back to root-split
+	// behaviour with an error so the caller can handle it cleanly.
+	if len(splitPoint.ParentKeyPath) > 0 {
+		close(results)
+		return fmt.Errorf("inner split at depth > 1 is not yet implemented (ParentKeyPath: %v); falling back to root split is required at the call site", splitPoint.ParentKeyPath)
+	}
+
+	// TODO(concurrency-siblings): only KeyPaths[0] is dispatched here.
+	// Full sibling-sequential pool dispatch is deferred.
+
 	// Extract the inner sub-template (value at the split key — already verified to be
 	// a map[string]any by analyzeTemplate).
-	subTemplate, ok := template[splitPoint.KeyPath].(map[string]any)
+	subTemplate, ok := template[splitPoint.KeyPaths[0]].(map[string]any)
 	if !ok {
 		// Defensive: should not happen given analyzeTemplate's guard.
 		close(results)
-		return fmt.Errorf("inner split key '%s' does not hold a map value", splitPoint.KeyPath)
+		return fmt.Errorf("inner split key '%s' does not hold a map value", splitPoint.KeyPaths[0])
+	}
+
+	// Re-derive the individual count for KeyPaths[0] from the bracket notation.
+	// splitPoint.Count is the sum of all sibling counts; for single-sibling dispatch
+	// we need only this sibling's own count.
+	singleSiblingCount, err := extractDigitInBrackets("object", splitPoint.KeyPaths[0])
+	if err != nil {
+		close(results)
+		return fmt.Errorf("inner split: could not derive count from key '%s': %w", splitPoint.KeyPaths[0], err)
 	}
 
 	// Process the parent map once, sequentially — all keys except the split key.
 	// We deep-copy the template to avoid mutating the caller's map, then temporarily
 	// remove the split key so processJsonMap does not expand it.
 	parentCopy := deepcopy.Copy(template).(map[string]any)
-	delete(parentCopy, splitPoint.KeyPath)
+	delete(parentCopy, splitPoint.KeyPaths[0])
 	parentMocker := mocker.New()
 	if err := processJsonMap(parentCopy, parentMocker); err != nil {
 		close(results)
@@ -468,7 +519,8 @@ func runWorkerPoolInner(
 	}
 
 	// Dispatch WorkUnits for the inner array range.
-	total := splitPoint.Count
+	// TODO(concurrency-siblings): uses singleSiblingCount (KeyPaths[0] only).
+	total := singleSiblingCount
 	start := 0
 	for start < total {
 		end := min(start+subBatchSize, total)
@@ -1596,7 +1648,9 @@ func streamOutput(
 	// TODO(concurrency-inner-streaming): eliminate the buffer for large inner arrays.
 	if splitPoint.Depth > 0 {
 		const parentCtxKey = "_ktns_parent_ctx_"
-		cleanKey := sanitizeKeyWithBrackets(splitPoint.KeyPath)
+		// TODO(concurrency-siblings): only KeyPaths[0] is used here.
+		// Full sibling-sequential output routing is deferred.
+		cleanKey := sanitizeKeyWithBrackets(splitPoint.KeyPaths[0])
 
 		// Receive the parent context from the first batch (sentinel).
 		var parentCtx map[string]any
@@ -1644,7 +1698,7 @@ func streamOutput(
 		}
 
 		// Assemble the final root object and sanitize it.
-		parentCtx[splitPoint.KeyPath] = innerSlice // use raw bracket key — sanitizeJsonMap will rename it
+		parentCtx[splitPoint.KeyPaths[0]] = innerSlice // use raw bracket key — sanitizeJsonMap will rename it
 		sanitizeJsonMap(parentCtx)
 		// parentCtx[cleanKey] now holds the assembled inner slice.
 		_ = cleanKey // used implicitly via sanitizeJsonMap renaming

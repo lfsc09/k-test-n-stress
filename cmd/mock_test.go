@@ -642,8 +642,8 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 			wantMinWeight: 20000 * 5000, // product of both
 		},
 		{
-			// generate==1 with two siblings at depth 1: first qualifying sibling is the
-			// split node; the other contributes to sibling sequential processing.
+			// generate==1 with two siblings at depth 1: both qualifying siblings are
+			// collected; Count is the sum of all sibling counts.
 			testName: "sibling n keys at same depth with generate=1 uses inner split on first",
 			parseMap: map[string]any{
 				"truck[10000]": map[string]any{"model": "{{ Car.model }}"},
@@ -652,9 +652,9 @@ func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
 			generate:      1,
 			numWorkers:    8,
 			wantSeq:       false,
-			wantCount:     10000, // inner split count = splitNode.count
+			wantCount:     20000, // Count = sum of all sibling counts (10000 + 10000)
 			wantDepth:     1,
-			wantMinWeight: 10000, // only nodes below splitDepth count in innerWeight
+			wantMinWeight: 20000, // TotalWeight = 1 * 20000 * 1
 		},
 		{
 			testName: "all n nodes below numWorkers threshold — sequential via totalWeight",
