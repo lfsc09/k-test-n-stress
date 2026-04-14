@@ -377,11 +377,11 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToStdout_AsCsv_ParseJson_Wi
 // --- Step 15: --to-json-file ---
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_DefaultName_ParseJson() {
-	testName := "Should create output.json beside binary when --to-json-file is passed with no value (parse-json)"
+	testName := "Should create output.json in the current working directory when --to-json-file is passed with no value (parse-json)"
 	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-json-file")
 	assert.NoError(suite.T(), err, testName)
-	// The file is written beside os.Executable(); in tests that's a temp binary path
-	// We simply assert no error was returned — the exact path is environment-dependent
+	// The file is written in the process's working directory (os.Getwd()).
+	// We simply assert no error was returned.
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToJsonFile_ExplicitName_ParseJson() {
@@ -441,11 +441,11 @@ func (suite *MockCmdE2ETestSuite) TestCLIShouldRaiseError_ParseStrWithToCsvFile(
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_DefaultName_ParseJson() {
-	testName := "Should create output.csv beside binary when --to-csv-file is passed with no value (parse-json)"
+	testName := "Should create output.csv in the current working directory when --to-csv-file is passed with no value (parse-json)"
 	_, err := suite.executeCommand("mock", "--parse-json", `{"name": "{{ Person.name }}"}`, "--to-csv-file")
 	assert.NoError(suite.T(), err, testName)
-	// File is beside os.Executable(); in tests that's a temp binary path
-	// We simply assert no error was returned — the exact path is environment-dependent
+	// The file is written in the process's working directory (os.Getwd()).
+	// We simply assert no error was returned.
 }
 
 func (suite *MockCmdE2ETestSuite) TestCLIShouldOutputToCsvFile_ExplicitName_ParseJson() {

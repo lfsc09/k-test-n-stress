@@ -2,6 +2,7 @@
 
 ## Architecture Decisions
 
+- **`workingDir()` uses `os.Getwd()`** — the default output path for `--to-json-file` and `--to-csv-file` (when source is `parse-json`) is resolved via `os.Getwd()`, not `os.Executable()`. `os.Executable()` returns the temp binary path under `go run .`, so files would be lost. `workingDir()` replaced the former `executableDir()` helper.
 - **`Mock` is not goroutine-safe** — each goroutine must call `mocker.New()` independently; never share a `*Mock` across goroutines.
 - **Per-instance `*rand.Rand` seeding** — `mocker.New()` seeds with three XOR factors: `time.Now().UnixNano() ^ (int64(os.Getpid()) * 0x517cc1b727220a95) ^ (mockerSeedCounter.Add(1) * -7046029254386353131)`. The last factor uses the Fibonacci hashing multiplier (`-7046029254386353131` = `0x9e3779b97f4a7c15` signed). `mockerSeedCounter` is a package-level `atomic.Int64`.
 - **Inner split for `[n]` keys is implemented for `generate == 1` only** — when `generate > 1` with inner `[n]` keys, `analyzeTemplate` returns `Depth: 0` (root split) as a fallback. See `TODO(concurrency-generate-gt1-inner-split)` in `cmd/mock.go`.
@@ -34,6 +35,7 @@
 - **Map iteration order is non-deterministic** — `processJsonMap` snapshots `objKeys` before iterating so key deletion/addition during the loop does not cause issues. `sanitizeJsonMap` does the same.
 - **CSV header derivation** — in `streamOutput`, headers are derived from the first item of the first batch (map key order is non-deterministic, so they are `sort.Strings`-sorted). This requires that all generated objects have the same top-level keys, which is guaranteed by the homogeneous template.
 - **`os.Rename` across filesystems fails** — `atomicFileCreate` places the temp file in `filepath.Dir(finalPath)` specifically to avoid cross-device rename errors.
+- **`--to-json-file` and `--to-csv-file` require `=` syntax for explicit filenames** — because `NoOptDefVal = "_use_default_"` is set, pflag treats a bare `--to-json-file value` as the flag followed by a separate positional argument. Explicit filenames must use `--to-json-file=myfile.json`. The `Long` help text and README both document this with the `Note:` lines.
 - **`cmd.Flags().Changed("to-json-file")`** — use `Changed()` to distinguish "flag not passed" from "flag passed without value"; `GetString` alone cannot make this distinction because cobra sets the value to `NoOptDefVal` when the flag is passed bare.
 - **`mocker` import alias shadowing** — inside `NewMockCmd`'s `RunE`, a local variable is named `mocker` (`mocker := mocker.New()`), shadowing the package import. This is intentional and pre-existing; do not rename the package.
 - **`Date.*` format parameters use `/…/` for format strings** — e.g. `{{ Date.date:::/YYYY-MM-DD/ }}`. Colons inside `/…/` are never treated as delimiters.
@@ -91,6 +93,7 @@
 
 | Plan | Date | Type |
 | --- | --- | --- |
+| `202604141746_bug_working_dir_and_tojsonfile_docs` | 2026-04-14 | bug |
 | `202604131510_refactor_mock_concurrency` | 2026-04-13 | refactor |
 | `202604131357_bug_paramguard_number_truncation_interface` | 2026-04-13 | bug |
 | `202604101540_feature_mock_concurrency` | 2026-04-10 | feature |

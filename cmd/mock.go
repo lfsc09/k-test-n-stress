@@ -668,13 +668,13 @@ Output routing (--parse-json and --parse-json-file):
 * --to-stdout <as-json|as-csv>: print the result to stdout as JSON or CSV.
 * --to-stdout-prettify: format the stdout output for readability (only valid with --to-stdout).
 * --to-json-file [filename]: write the result as JSON to a file.
-  If no filename is given, defaults to output.json beside the binary (for --parse-json)
+  If no filename is given, defaults to output.json in the current working directory (for --parse-json)
   or to the template name without .template (for --parse-json-file).
-  Note: --to-json-file requires an explicit value or use --to-json-file "" for the default.
+  Note: when specifying a filename, use = syntax: --to-json-file=myfile.json
 * --to-csv-file [filename]: write the result as CSV to a file.
-  If no filename is given, defaults to output.csv beside the binary (for --parse-json)
+  If no filename is given, defaults to output.csv in the current working directory (for --parse-json)
   or to the template name without .template with a .csv extension (for --parse-json-file).
-  Note: --to-csv-file requires an explicit value or use --to-csv-file "" for the default.
+  Note: when specifying a filename, use = syntax: --to-csv-file=myfile.csv
 * CSV output works best with flat (one-level-deep) JSON objects. Nested objects and arrays
   are serialised using their Go string representation.
 
@@ -1249,14 +1249,15 @@ func sanitizeKeyWithBrackets(str string) string {
 	return str
 }
 
-// executableDir returns the directory of the running ktns binary.
-// Used to resolve the default output path for --to-json-file when parsing from stdin.
-func executableDir() (string, error) {
-	exe, err := os.Executable()
+// workingDir returns the current working directory.
+// Used to resolve the default output path for --to-json-file and --to-csv-file
+// when no explicit filename is provided and the source is not --parse-json-file.
+func workingDir() (string, error) {
+	dir, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("could not determine executable path: %w", err)
+		return "", fmt.Errorf("could not determine working directory: %w", err)
 	}
-	return filepath.Dir(exe), nil
+	return dir, nil
 }
 
 // marshalAsCSV serialises a slice of flat maps to CSV.
@@ -1358,7 +1359,7 @@ func resolveOutputPaths(
 		case source == "parse-json-file":
 			jsonPath = defaultFilePath
 		default:
-			dir, e := executableDir()
+			dir, e := workingDir()
 			if e != nil {
 				return "", "", e
 			}
@@ -1373,7 +1374,7 @@ func resolveOutputPaths(
 		case source == "parse-json-file":
 			csvPath = defaultCsvFilePath
 		default:
-			dir, e := executableDir()
+			dir, e := workingDir()
 			if e != nil {
 				return "", "", e
 			}
@@ -1914,8 +1915,8 @@ func routeOutput(
 		case source == "parse-json-file":
 			resolvedPath = defaultFilePath
 		default:
-			// source == "parse-json": use output.json beside the binary
-			dir, err := executableDir()
+			// source == "parse-json": use output.json in the current working directory
+			dir, err := workingDir()
 			if err != nil {
 				return err
 			}
@@ -1950,8 +1951,8 @@ func routeOutput(
 		case source == "parse-json-file":
 			resolvedCsvPath = defaultCsvFilePath
 		default:
-			// source == "parse-json": use output.csv beside the binary
-			dir, err := executableDir()
+			// source == "parse-json": use output.csv in the current working directory
+			dir, err := workingDir()
 			if err != nil {
 				return err
 			}

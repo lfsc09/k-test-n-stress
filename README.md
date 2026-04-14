@@ -58,8 +58,8 @@ ktns mock --parse-str 'Name: Person.name'
 - `--generate`: Pass the desired amount of root objects that will be generated (available for `--parse-json` and `--parse-json-file`). (More info [here](#generating-multiple-values))
 - `--to-stdout <as-json|as-csv>`: Output the result to stdout as a JSON object/array or as a CSV table. Must be used with `--parse-json` or `--parse-json-file`. Use `--to-stdout-prettify` to format for readability. Note: CSV output works best with flat (one-level-deep) JSON objects; nested objects and arrays are serialised using their Go string representation.
 - `--to-stdout-prettify`: Prettify the stdout output (indented JSON or padded-column CSV). Only valid with `--to-stdout`.
-- `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` beside the binary (for `--parse-json`) or to the template name without `.template` in the same directory (for `--parse-json-file`). If a filename is given using `--to-json-file=myfile.json`, it is used as-is. Can be combined with `--to-stdout`.
-- `--to-csv-file [filename]`: Write the result as CSV to a file. Same filename-resolution rules as `--to-json-file` (default `output.csv` for `--parse-json`, template name for `--parse-json-file`). Can be combined with `--to-stdout` and `--to-json-file`. Note: CSV output works best with flat (one-level-deep) JSON objects.
+- `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` in the current working directory (for `--parse-json`) or to the template name without `.template` in the same directory as the template (for `--parse-json-file`). When specifying an explicit filename, the `=` syntax is required: `--to-json-file=myfile.json`. Can be combined with `--to-stdout`.
+- `--to-csv-file [filename]`: Write the result as CSV to a file. Same filename-resolution rules as `--to-json-file` (default `output.csv` in the current working directory for `--parse-json`, template name for `--parse-json-file`). When specifying an explicit filename, the `=` syntax is required: `--to-csv-file=myfile.csv`. Can be combined with `--to-stdout` and `--to-json-file`. Note: CSV output works best with flat (one-level-deep) JSON objects.
 - `--debug`: Print a live generation-progress line to stderr during large runs (workers, memory estimate, throughput, elapsed time). Writes to stderr only — stdout/file output is unaffected. Opt-in; default `false`.
 
 ### Examples
@@ -109,7 +109,7 @@ ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number:
 # 34,Josh Smith
 ```
 
-Write to a file (default name `output.json` beside the binary):
+Write to a file (default name `output.json` in the current working directory):
 
 ```bash
 ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file
