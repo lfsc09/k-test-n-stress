@@ -462,7 +462,6 @@ Would result in only the response body to be shown.
 
 - [`Cobra`](github.com/spf13/cobra): A commandder for modern Go CLI interations.
 - [`Faker/v2`](github.com/jaswdr/faker/v2): Fake data generator for Go.
-- [`Gogoren`](github.com/zach-klippenstein/goregen): Randexp for Go.
 - [`Deepcopy`](github.com/mohae/deepcopy): Deepcopy things.
 - [`Testify`](github.com/stretchr/testify): Toolkit with common assertions and mocks that plays nicely with the standard library.
 
@@ -493,14 +492,13 @@ Blank entries (`""`) mean "use default", enabling positional omission (e.g. `Num
 | Dependency | Used for |
 | -- | -- |
 | `github.com/jaswdr/faker/v2` | ~90% of functions (addresses, persons, companies, etc.) |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` (via per-instance generator) |
-| `math/rand` | Per-instance `*rand.Rand` in `Mock` — used by `Company.cnpj`, `Person.cpf`, and as the RNG source for goregen generators |
+| `math/rand/v2` | Per-instance `*rand.Rand` in `Mock` — used by `Company.cnpj`, `Person.cpf`, `Regex.regex`, and `Payment.creditCardCvv` |
 
 ##### Custom Implementations
 
 - `Person.cpf` and `Company.cnpj`: Generate random digit sequences using the instance's own `*rand.Rand` and compute two mathematically valid checksum digits via the modulo-11 algorithm (`calculateChecksum` in `helpers.go`).
-- `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then calls `regen.NewGenerator` with the instance's `*rand.Rand` as the RNG source to produce a matching random string.
-- `Payment.creditCardCvv`: Uses a `regen.Generator` (created at `mocker.New()` time, stored on the instance) backed by the instance's `*rand.Rand` to produce a 3-digit string — no global random source is touched.
+- `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then uses `RandexpGenerator` (defined in `mocker/randexp.go`) with the instance's `*rand.Rand` to produce a matching random string.
+- `Payment.creditCardCvv`: Uses a `RandexpGenerator` (created at `mocker.New()` time, stored on the instance) driven by the instance's `*rand.Rand` to produce a 3-digit string — no global random source is touched.
 
 ##### Adding a New Mock Function
 

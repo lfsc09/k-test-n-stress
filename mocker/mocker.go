@@ -3,7 +3,7 @@ package mocker
 import (
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"strconv"
 	"strings"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jaswdr/faker/v2"
-	regen "github.com/zach-klippenstein/goregen"
 )
 
 // mockerSeedCounter provides monotonically-increasing offsets so concurrent
@@ -21,8 +20,8 @@ var mockerSeedCounter atomic.Int64
 
 type Mock struct {
 	jaswdrFaker *faker.Faker
-	rng         *rand.Rand // per-instance source; never share across goroutines
-	cvvGen      regen.Generator
+	rng         *rand.Rand        // per-instance source; never share across goroutines
+	cvvGen      *RandexpGenerator // pre-built generator for credit card CVV, since it's a common use case and has a simple fixed pattern
 }
 
 // New creates a new instance of Mock with an initialized jaswdrFaker and a
@@ -32,9 +31,12 @@ func New() *Mock {
 	jaswdrFaker := faker.New()
 	// Fibonacci hashing multiplier (signed): ensures unique seeds across concurrent New() calls
 	seed := time.Now().UnixNano() ^ (int64(os.Getpid()) * 0x517cc1b727220a95) ^ (mockerSeedCounter.Add(1) * -7046029254386353131)
-	rng := rand.New(rand.NewSource(seed))
+	rng := rand.New(rand.NewPCG(uint64(seed), uint64(seed)))
 
-	cvvGen, _ := regen.NewGenerator("[0-9]{3}", &regen.GeneratorArgs{RngSource: rng})
+	cvvGen, cvvError := NewRandexpGenerator("[0-9]{3}")
+	if cvvError != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to build CVV generator: %v\n", cvvError)
+	}
 
 	return &Mock{
 		jaswdrFaker: &jaswdrFaker,
@@ -45,41 +47,41 @@ func New() *Mock {
 
 // tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
 func tableLineDivider(colSizes []int) string {
-	var line string
+	var line strings.Builder
 	for idx, size := range colSizes {
 		if idx == 0 {
-			line += strings.Repeat("-", size)
+			line.WriteString(strings.Repeat("-", size))
 		} else {
-			line += "+" + strings.Repeat("-", size)
+			line.WriteString("+" + strings.Repeat("-", size))
 		}
 	}
-	return line
+	return line.String()
 }
 
 // tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
 func tableLineHeader(colSizes []int) string {
-	var line string
+	var line strings.Builder
 	for idx, size := range colSizes {
 		if idx == 0 {
-			line += fmt.Sprintf("%-*s", size, "FUNCTION")
+			fmt.Fprintf(&line, "%-*s", size, "FUNCTION")
 		} else {
-			line += "| " + fmt.Sprintf("%-*s", size, "DESCRIPTION")
+			fmt.Fprintf(&line, "| %-*s", size, "DESCRIPTION")
 		}
 	}
-	return line
+	return line.String()
 }
 
 // tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
 func tableLineData(colSizes []int, data []string) string {
-	var line string
+	var line strings.Builder
 	for idx, size := range colSizes {
 		if idx == 0 {
-			line += fmt.Sprintf("%-*s", size, data[idx])
+			fmt.Fprintf(&line, "%-*s", size, data[idx])
 		} else {
-			line += "| " + fmt.Sprintf("%-*s", size, data[idx])
+			fmt.Fprintf(&line, "| %-*s", size, data[idx])
 		}
 	}
-	return line
+	return line.String()
 }
 
 // List writes a formatted list of available mock functions and their descriptions to the provided io.Writer. Each function is displayed in a tabular format with its name and description.
@@ -225,7 +227,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 
 		// Generate the first 12 random digits
 		for i := range 12 {
-			cnpj[i] = m.rng.Intn(10)
+			cnpj[i] = m.rng.IntN(10)
 		}
 
 		// Multipliers for checksum digits
@@ -376,13 +378,9 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		return m.jaswdrFaker.Payment().CreditCardType(), nil
 	case "Payment.creditCardCvv":
 		if m.cvvGen == nil {
-			var err error
-			m.cvvGen, err = regen.NewGenerator("[0-9]{3}", &regen.GeneratorArgs{RngSource: m.rng})
-			if err != nil {
-				return "", fmt.Errorf("failed to build CVV generator: %w", err)
-			}
+			return "", fmt.Errorf("missing CVV generator instance")
 		}
-		return m.cvvGen.Generate(), nil
+		return m.cvvGen.Generate(m.rng), nil
 	/*
 		PERSON
 	*/
@@ -401,7 +399,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 
 		// Generate the first 9 random digits
 		for i := range 9 {
-			cpf[i] = m.rng.Intn(10)
+			cpf[i] = m.rng.IntN(10)
 		}
 
 		// Multipliers for checksum digits
@@ -430,11 +428,11 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if err != nil {
 			return "", err
 		}
-		gen, err := regen.NewGenerator(regex, &regen.GeneratorArgs{RngSource: m.rng})
+		gen, err := NewRandexpGenerator(regex)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate regex '%w'", err)
 		}
-		return gen.Generate(), nil
+		return gen.Generate(m.rng), nil
 	/*
 		DATE
 	*/
@@ -468,7 +466,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		// Pick a random whole day within the range
 		daySeconds := int64(24 * 60 * 60)
 		days := delta / daySeconds
-		randomDay := m.rng.Int63n(days + 1)
+		randomDay := m.rng.Int64N(days + 1)
 		result := fromTime.Add(time.Duration(randomDay*daySeconds) * time.Second)
 		return formatDatetime(result, format), nil
 	case "Date.time":
@@ -494,18 +492,18 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 			}
 			format = extracted
 		}
-		fromSecs := fromTime.Hour()*3600 + fromTime.Minute()*60
-		toSecs := toTime.Hour()*3600 + toTime.Minute()*60
+		fromSecs := int64(fromTime.Hour()*3600 + fromTime.Minute()*60)
+		toSecs := int64(toTime.Hour()*3600 + toTime.Minute()*60)
 		totalRange := toSecs - fromSecs + 59 // +59 to include seconds within the final minute
 		if totalRange < 0 {
 			return "", fmt.Errorf("Date.time: 'from' must be before 'to'")
 		}
-		randomSecs := m.rng.Intn(totalRange + 1)
-		randomMs := m.rng.Intn(1000)
-		h := (fromSecs + randomSecs) / 3600
+		randomSecs := m.rng.Int64N(totalRange + 1)
+		randomMs := m.rng.IntN(1000)
+		h := int((fromSecs + randomSecs) / 3600)
 		remaining := (fromSecs + randomSecs) % 3600
-		min := remaining / 60
-		sec := remaining % 60
+		min := int(remaining / 60)
+		sec := int(remaining % 60)
 		result := time.Date(0, 1, 1, h, min, sec, randomMs*1_000_000, time.UTC)
 		return formatDatetime(result, format), nil
 	case "Date.datetime":
@@ -535,7 +533,7 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 		if deltaMs < 0 {
 			return "", fmt.Errorf("Date.datetime: 'from' must be before 'to'")
 		}
-		randomDelta := m.rng.Int63n(deltaMs + 1)
+		randomDelta := m.rng.Int64N(deltaMs + 1)
 		result := time.UnixMilli(fromTime.UnixMilli() + randomDelta)
 		return formatDatetime(result, format), nil
 	case "Date.now":

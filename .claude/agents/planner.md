@@ -66,7 +66,7 @@ If the user specifies a name, append it after the datetime prefix.
 
 ### Package Structure
 
-- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded), and a pre-built `regen.Generator` for CVV generation. **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `List(out io.Writer)` renders the available functions table using `tableLineData`.
+- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded), and a pre-built `*RandexpGenerator` for CVV generation (see `mocker/randexp.go`). **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `List(out io.Writer)` renders the available functions table using `tableLineData`.
 - **`cmd/`**: All Cobra command definitions. Entry points are `Execute()` (production) and `NewRootCmd(opts *CommandOptions) *cobra.Command` (testable). `CommandOptions` carries an `Out io.Writer` — all subcommands must honor it via `cmd.SetOut(opts.Out)`.
 
 ### Key Dependencies
@@ -75,7 +75,7 @@ If the user specifies a name, append it after the datetime prefix.
 | -- | -- |
 | `github.com/spf13/cobra` | CLI command structure |
 | `github.com/jaswdr/faker/v2` | ~90% of mock functions |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` — via per-instance `regen.Generator` backed by `m.rng` |
+| `mocker/randexp.go` (internal) | `Regex.regex` and `Payment.creditCardCvv` — via per-instance `*RandexpGenerator`; caller passes `m.rng` to `Generate` |
 | `github.com/mohae/deepcopy` | Deep-copying JSON template objects |
 | `github.com/stretchr/testify` | Test assertions and suites |
 
