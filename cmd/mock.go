@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -15,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -25,239 +23,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var objKeyNumberRegex = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
-
-// interpretStringRegex matches a value that is entirely {{ … }}.
-var interpretStringRegex = regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
-
-// bracketCharRegex detects any '[' or ']' character in a key string.
-var bracketCharRegex = regexp.MustCompile(`[\[\]]`)
-
-// SplitPoint describes where the worker pool will chunk generation work.
-type SplitPoint struct {
-	// Depth is 0 for a root-level split (--generate count), >0 for an inner [n] key.
-	Depth int
-	// KeyPaths holds all qualifying sibling keys at the split depth (empty for depth-0 splits).
-	KeyPaths []string
-	// ParentKeyPath holds path segments from root to the parent map that contains the
-	// split keys. Empty when split depth == 1 (keys are direct children of the root
-	// template map).
-	ParentKeyPath []string
-	// Count is the total number of items across all siblings at the split node
-	// (generate count for depth-0, sum of sibling [n] values for depth > 0).
-	Count int
-	// InnerWeight is the product of all [n] multipliers below the split point.
-	// For a leaf split, InnerWeight == 1.
-	InnerWeight int64
-	// TotalWeight == Count * InnerWeight (times generate for depth > 0)
-	TotalWeight int64
-	// UseSequential is true when TotalWeight < concurrencyThreshold; the caller
-	// should skip the worker pool and use the existing sequential path.
-	UseSequential bool
-}
-
-const concurrencyThreshold = 10_000 // items below this count go sequential
-const targetSubBatch = 750          // target items per WorkUnit at the split level
-const estimatedItemBytes = 512      // rough estimate of bytes per generated item (for --debug memory display)
-
-// bracketNode records a [n] key found during template walk.
-type bracketNode struct {
-	depth      int
-	keyPath    string
-	count      int
-	parentPath []string // path segments from root to the map that directly contains this key; empty at depth 1
-}
-
-// walkBracketCounts performs a depth-first walk of parseMap and returns all [n]
-// nodes found at each depth level. parentPath holds the path segments from root
-// to parseMap (empty for the root template map itself).
-func walkBracketCounts(parseMap map[string]any, depth int, parentPath []string) []bracketNode {
-	var nodes []bracketNode
-	for key, val := range parseMap {
-		matches := objKeyNumberRegex.FindStringSubmatch(key)
-		if len(matches) == 2 {
-			count, err := strconv.Atoi(matches[1])
-			if err == nil && count > 0 {
-				// Copy parentPath to prevent slice aliasing across nodes.
-				pp := append([]string(nil), parentPath...)
-				nodes = append(nodes, bracketNode{depth: depth, keyPath: key, count: count, parentPath: pp})
-			}
-		}
-		// Recurse into nested maps
-		if nested, ok := val.(map[string]any); ok {
-			nodes = append(nodes, walkBracketCounts(nested, depth+1, append(parentPath, key))...)
-		}
-	}
-	return nodes
-}
-
-// productOfCounts returns the product of n.count for every node in nodes.
-// Returns 1 for an empty slice.
-func productOfCounts(nodes []bracketNode) int64 {
-	product := int64(1)
-	for _, n := range nodes {
-		product *= int64(n.count)
-	}
-	return product
-}
-
-// productOfCountsBelow returns the product of n.count for every node whose depth
-// is strictly greater than depth. Returns 1 if no such nodes exist.
-func productOfCountsBelow(nodes []bracketNode, depth int) int64 {
-	product := int64(1)
-	for _, n := range nodes {
-		if n.depth > depth {
-			product *= int64(n.count)
-		}
-	}
-	return product
-}
-
-// navigateToMap walks root by following path segments in order and returns the
-// resulting map. Returns (nil, false) if any segment is missing or not a map.
-func navigateToMap(root map[string]any, path []string) (map[string]any, bool) {
-	cur := root
-	for _, seg := range path {
-		val, ok := cur[seg]
-		if !ok {
-			return nil, false
-		}
-		next, ok := val.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		cur = next
-	}
-	return cur, true
-}
-
-// buildRootSplit constructs a root-level SplitPoint (Depth == 0).
-func buildRootSplit(generate int, innerWeight int64) SplitPoint {
-	totalWeight := int64(generate) * innerWeight
-	return SplitPoint{
-		Depth:         0,
-		KeyPaths:      nil,
-		ParentKeyPath: nil,
-		Count:         generate,
-		InnerWeight:   innerWeight,
-		TotalWeight:   totalWeight,
-		UseSequential: totalWeight < concurrencyThreshold,
-	}
-}
-
-// analyzeTemplate walks the template tree once (depth-first) to determine the
-// optimal split point for the worker pool. It returns a SplitPoint describing
-// where to parallelize work and whether the sequential path should be used
-// instead (when the total work item count is below concurrencyThreshold).
-func analyzeTemplate(parseMap map[string]any, generate int, numWorkers int) SplitPoint {
-	nodes := walkBracketCounts(parseMap, 1, nil) // depth 1 = first level inside root
-
-	// 1. No [n] keys — split at root (--generate count).
-	if len(nodes) == 0 {
-		return buildRootSplit(generate, 1)
-	}
-
-	// 2. generate > 1 with inner [n] keys: fall back to root split.
-	// Inner split for generate > 1 is not yet implemented.
-	// TODO(concurrency-generate-gt1-inner-split): implement inner split for generate > 1.
-	if generate > 1 {
-		return buildRootSplit(generate, productOfCounts(nodes))
-	}
-
-	// 3. Sort by depth ascending, then count descending.
-	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].depth != nodes[j].depth {
-			return nodes[i].depth < nodes[j].depth
-		}
-		return nodes[i].count > nodes[j].count
-	})
-
-	// 4. Find the shallowest depth where any node has count >= numWorkers.
-	splitDepth := -1
-	for _, n := range nodes {
-		if n.count >= numWorkers {
-			splitDepth = n.depth
-			break
-		}
-	}
-
-	// 5. No qualifying split depth — use root split.
-	if splitDepth == -1 {
-		return buildRootSplit(generate, productOfCounts(nodes))
-	}
-
-	// 6. Collect all siblings at splitDepth with count >= numWorkers.
-	var siblings []bracketNode
-	for _, n := range nodes {
-		if n.depth == splitDepth && n.count >= numWorkers {
-			siblings = append(siblings, n)
-		}
-	}
-
-	if len(siblings) == 0 {
-		return buildRootSplit(generate, productOfCounts(nodes))
-	}
-
-	// All siblings must share the same parentPath (same parent map).
-	// By construction this should always hold, but guard defensively.
-	for _, s := range siblings[1:] {
-		if len(s.parentPath) != len(siblings[0].parentPath) {
-			return buildRootSplit(generate, productOfCounts(nodes))
-		}
-		for i, seg := range s.parentPath {
-			if seg != siblings[0].parentPath[i] {
-				return buildRootSplit(generate, productOfCounts(nodes))
-			}
-		}
-	}
-
-	// Navigate to the parent map that contains the sibling keys.
-	parentMap, ok := navigateToMap(parseMap, siblings[0].parentPath)
-	if !ok {
-		return buildRootSplit(generate, productOfCounts(nodes))
-	}
-
-	// Validate that every sibling's value is a map[string]any (object template).
-	for _, s := range siblings {
-		if _, isMap := parentMap[s.keyPath].(map[string]any); !isMap {
-			return buildRootSplit(generate, productOfCounts(nodes))
-		}
-	}
-
-	// Compute the aggregated split metrics.
-	totalSiblingCount := 0
-	for _, s := range siblings {
-		totalSiblingCount += s.count
-	}
-	innerWeight := productOfCountsBelow(nodes, splitDepth)
-	totalWeight := int64(generate) * int64(totalSiblingCount) * innerWeight
-
-	// Build KeyPaths slice.
-	keyPaths := make([]string, len(siblings))
-	for i, s := range siblings {
-		keyPaths[i] = s.keyPath
-	}
-
-	return SplitPoint{
-		Depth:         splitDepth,
-		KeyPaths:      keyPaths,
-		ParentKeyPath: append([]string(nil), siblings[0].parentPath...),
-		Count:         totalSiblingCount,
-		InnerWeight:   innerWeight,
-		TotalWeight:   totalWeight,
-		UseSequential: totalWeight < concurrencyThreshold,
-	}
-}
-
-// WorkUnit is a single chunk of work sent to a worker goroutine.
-type WorkUnit struct {
-	startIdx         int
-	endIdx           int
-	templateSnapshot map[string]any // deep copy of the template at the split level; never shared
-}
-
-// RunStats holds both static configuration and live counters for the --debug display.
-type RunStats struct {
+// DebugStats holds both static configuration and live counters for the --debug display.
+type DebugStats struct {
 	// Static fields — set once before workers start
 	CoresAvailable  int
 	CoresUsed       int
@@ -267,351 +34,28 @@ type RunStats struct {
 	StartTime       time.Time
 
 	// Live counters — updated atomically by workers/writer
-	Generated    atomic.Int64 // incremented per item completed by each worker
-	BytesWritten atomic.Int64 // incremented by writer goroutine per write
+	Generated          atomic.Int64 // incremented per item completed by each worker
+	BytesWrittenToJson atomic.Int64 // incremented by writer goroutine per write
+	BytesWrittenToCsv  atomic.Int64 // incremented by writer goroutine per write
 }
 
-// runWorkerPool starts numWorkers goroutines, dispatches WorkUnits for either a
-// root split (splitPoint.Depth == 0) or an inner [n] key split
-// (splitPoint.Depth > 0), and closes results when all workers complete. The
-// caller must read from results until it is closed.
-//
-// For root splits: each WorkUnit covers a range of root objects (generate count).
-// For inner splits: each WorkUnit covers a range of inner-array items. The parent
-// map (all keys except the split key) is processed once sequentially and stored in
-// splitPoint; the writer (streamOutput) reassembles the final object.
-func runWorkerPool(
-	ctx context.Context,
-	splitPoint SplitPoint,
-	template map[string]any,
-	numWorkers int,
-	results chan<- []map[string]any,
-	stats *RunStats,
-) error {
-	if splitPoint.Depth == 0 {
-		return runWorkerPoolRoot(ctx, splitPoint, template, numWorkers, results, stats)
-	}
-	return runWorkerPoolInner(ctx, splitPoint, template, numWorkers, results, stats)
-}
+// parseDynamicValueRegex matches a value that is entirely {{ … }}.
+var parseDynamicValueRegex *regexp.Regexp = regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
 
-// runWorkerPoolRoot handles the root-split (Depth == 0) worker pool path.
-// Each worker generates complete root objects independently.
-func runWorkerPoolRoot(
-	ctx context.Context,
-	splitPoint SplitPoint,
-	template map[string]any,
-	numWorkers int,
-	results chan<- []map[string]any,
-	stats *RunStats,
-) error {
-	subBatchSize := targetSubBatch
-	if splitPoint.InnerWeight > 1 {
-		subBatchSize = max(1, targetSubBatch/int(splitPoint.InnerWeight))
-	}
+// bracketNumberRegex matches keys with bracketed numbers, e.g. "employees[5]" and captures the number.
+var bracketNumberRegex *regexp.Regexp = regexp.MustCompile(`^[^\[\]\s]+\[(\d+)\]$`)
 
-	jobs := make(chan WorkUnit, numWorkers)
-	errCh := make(chan error, numWorkers)
+// bracketCharRegex detects any '[' or ']' character in a key string.
+var bracketCharRegex *regexp.Regexp = regexp.MustCompile(`[\[\]]`)
 
-	var wg sync.WaitGroup
-	for range numWorkers {
-		wg.Go(func() {
-			workerMocker := mocker.New()
-			for unit := range jobs {
-				batch := make([]map[string]any, 0, unit.endIdx-unit.startIdx)
-				for i := unit.startIdx; i < unit.endIdx; i++ {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-					cp := deepcopy.Copy(unit.templateSnapshot).(map[string]any)
-					if err := processJsonMap(cp, workerMocker); err != nil {
-						errCh <- err
-						return
-					}
-					sanitizeJsonMap(cp)
-					batch = append(batch, cp)
-					stats.Generated.Add(1)
-				}
-				select {
-				case results <- batch:
-				case <-ctx.Done():
-					return
-				}
-			}
-		})
-	}
-
-	// Dispatch WorkUnits
-	total := splitPoint.Count
-	start := 0
-	for start < total {
-		end := min(start+subBatchSize, total)
-		unit := WorkUnit{
-			startIdx:         start,
-			endIdx:           end,
-			templateSnapshot: template,
-		}
-		select {
-		case jobs <- unit:
-		case <-ctx.Done():
-		}
-		start = end
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	close(jobs)
-
-	// Wait for all workers to finish, then close results
-	go func() {
-		wg.Wait()
-		close(results)
-		close(errCh)
-	}()
-
-	// Collect first error (if any) — wait for errCh to be closed
-	var firstErr error
-	for err := range errCh {
-		if firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-// runWorkerPoolInner handles the inner-split (Depth > 0) worker pool path.
-//
-// The parent map (all keys except the split key) is processed once sequentially
-// here. Workers generate only the inner-array items identified by splitPoint.KeyPaths[0].
-// The writer (streamOutput) receives sub-batches of inner items and reassembles the
-// final parent object after all inner items have been received.
-//
-// Memory note: the inner array is buffered in the writer until all sub-batches
-// arrive. For very large inner arrays this is O(inner_count × item_size).
-// TODO(concurrency-inner-streaming): eliminate the buffer for large inner arrays.
-func runWorkerPoolInner(
-	ctx context.Context,
-	splitPoint SplitPoint,
-	template map[string]any,
-	numWorkers int,
-	results chan<- []map[string]any,
-	stats *RunStats,
-) error {
-	// Depth > 1 inner dispatch is not yet implemented. Fall back to root-split
-	// behaviour with an error so the caller can handle it cleanly.
-	if len(splitPoint.ParentKeyPath) > 0 {
-		close(results)
-		return fmt.Errorf("inner split at depth > 1 is not yet implemented (ParentKeyPath: %v); falling back to root split is required at the call site", splitPoint.ParentKeyPath)
-	}
-
-	// TODO(concurrency-siblings): only KeyPaths[0] is dispatched here.
-	// Full sibling-sequential pool dispatch is deferred.
-
-	// Extract the inner sub-template (value at the split key — already verified to be
-	// a map[string]any by analyzeTemplate).
-	subTemplate, ok := template[splitPoint.KeyPaths[0]].(map[string]any)
-	if !ok {
-		// Defensive: should not happen given analyzeTemplate's guard.
-		close(results)
-		return fmt.Errorf("inner split key '%s' does not hold a map value", splitPoint.KeyPaths[0])
-	}
-
-	// Re-derive the individual count for KeyPaths[0] from the bracket notation.
-	// splitPoint.Count is the sum of all sibling counts; for single-sibling dispatch
-	// we need only this sibling's own count.
-	singleSiblingCount, err := extractDigitInBrackets("object", splitPoint.KeyPaths[0])
-	if err != nil {
-		close(results)
-		return fmt.Errorf("inner split: could not derive count from key '%s': %w", splitPoint.KeyPaths[0], err)
-	}
-
-	// Process the parent map once, sequentially — all keys except the split key.
-	// We deep-copy the template to avoid mutating the caller's map, then temporarily
-	// remove the split key so processJsonMap does not expand it.
-	parentCopy := deepcopy.Copy(template).(map[string]any)
-	delete(parentCopy, splitPoint.KeyPaths[0])
-	parentMocker := mocker.New()
-	if err := processJsonMap(parentCopy, parentMocker); err != nil {
-		close(results)
-		return fmt.Errorf("error processing parent context for inner split: %w", err)
-	}
-	// Note: sanitizeJsonMap on parentCopy is deferred to streamOutput so it runs
-	// after the inner array is assembled into the parent map.
-
-	// Store the processed parent context in splitPoint for streamOutput to use.
-	// splitPoint is passed by value to streamOutput, so we embed the context there
-	// via the exported ParentCtx field (added below in the SplitPoint struct).
-	// We send it through the dedicated channel instead to avoid changing SplitPoint.
-	// See streamOutput for the assembly step.
-	//
-	// Here we simply store the parentCopy in a local variable and pass it via closure
-	// to the goroutine that closes results — but streamOutput also needs it.
-	// The cleanest approach: send one sentinel batch containing the parent context first,
-	// then send inner batches. streamOutput checks a flag in the SplitPoint to know
-	// the first batch is the parent.
-	//
-	// For the first delivery we extend SplitPoint with ParentCtx to carry this.
-	// This avoids an additional channel or complex sequencing.
-	//
-	// The field is set here and read in streamOutput. Since runWorkerPool returns
-	// before streamOutput reads it (they run concurrently via poolWg), we rely on
-	// the happens-before guarantee of the channel send/receive to synchronise:
-	// workers send to results, streamOutput reads from results. The parentCopy is
-	// set in splitPoint before any sends to results, so it is visible to streamOutput.
-	//
-	// HOWEVER: splitPoint is passed by VALUE to both runWorkerPool and streamOutput
-	// at the call site in runConcurrent. Setting a field here would not propagate
-	// to the streamOutput call. We therefore use a different mechanism:
-	// send the parentCopy as the very first batch (a single-element batch).
-	// streamOutput identifies it via splitPoint.Depth > 0 and treats the first
-	// received batch as the parent context, not inner items.
-	//
-	// The parent context batch uses a reserved key "_ktns_parent_ctx_" as the sole
-	// map entry to distinguish it from inner item batches.
-	const parentCtxKey = "_ktns_parent_ctx_"
-	parentCtxBatch := []map[string]any{
-		{parentCtxKey: parentCopy},
-	}
-	select {
-	case results <- parentCtxBatch:
-	case <-ctx.Done():
-		close(results)
-		return ctx.Err()
-	}
-
-	subBatchSize := targetSubBatch
-	if splitPoint.InnerWeight > 1 {
-		subBatchSize = max(1, targetSubBatch/int(splitPoint.InnerWeight))
-	}
-
-	jobs := make(chan WorkUnit, numWorkers)
-	errCh := make(chan error, numWorkers)
-
-	var wg sync.WaitGroup
-	for range numWorkers {
-		wg.Go(func() {
-			workerMocker := mocker.New()
-			for unit := range jobs {
-				batch := make([]map[string]any, 0, unit.endIdx-unit.startIdx)
-				for i := unit.startIdx; i < unit.endIdx; i++ {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-					cp := deepcopy.Copy(unit.templateSnapshot).(map[string]any)
-					if err := processJsonMap(cp, workerMocker); err != nil {
-						errCh <- err
-						return
-					}
-					sanitizeJsonMap(cp)
-					batch = append(batch, cp)
-					stats.Generated.Add(1)
-				}
-				select {
-				case results <- batch:
-				case <-ctx.Done():
-					return
-				}
-			}
-		})
-	}
-
-	// Dispatch WorkUnits for the inner array range.
-	// TODO(concurrency-siblings): uses singleSiblingCount (KeyPaths[0] only).
-	total := singleSiblingCount
-	start := 0
-	for start < total {
-		end := min(start+subBatchSize, total)
-		unit := WorkUnit{
-			startIdx:         start,
-			endIdx:           end,
-			templateSnapshot: subTemplate,
-		}
-		select {
-		case jobs <- unit:
-		case <-ctx.Done():
-		}
-		start = end
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	close(jobs)
-
-	// Wait for all workers to finish, then close results.
-	go func() {
-		wg.Wait()
-		close(results)
-		close(errCh)
-	}()
-
-	// Collect first error (if any) — wait for errCh to be closed.
-	var firstErr error
-	for err := range errCh {
-		if firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-// startDebugDisplay launches a goroutine that prints live progress to out (always
-// os.Stderr in production) at 200ms intervals. Call the returned stop function to
-// terminate the display and print a final newline.
-func startDebugDisplay(ctx context.Context, stats *RunStats, out io.Writer) (stop func()) {
-	innerCtx, cancel := context.WithCancel(ctx)
-
-	done := make(chan struct{})
-	render := func(final bool) {
-		elapsed := time.Since(stats.StartTime).Seconds()
-		gen := stats.Generated.Load()
-		written := stats.BytesWritten.Load()
-		total := stats.TotalWeight
-		pct := 0.0
-		if total > 0 {
-			pct = float64(gen) / float64(total) * 100
-		}
-		memStr := formatSizeMetrics(stats.EstMemPeakBytes)
-		if written > 0 {
-			fmt.Fprintf(out, "\r[debug] Workers: %d/%d | PeakMem: ~%s | Progress: %d / %d (%.1f%%) | Elapsed: %.1fs | File: ~%s",
-				stats.CoresUsed, stats.CoresAvailable, memStr, gen, total, pct, elapsed, formatSizeMetrics(written))
-		} else {
-			fmt.Fprintf(out, "\r[debug] Workers: %d/%d | PeakMem: ~%s | Progress: %d / %d (%.1f%%) | Elapsed: %.1fs",
-				stats.CoresUsed, stats.CoresAvailable, memStr, gen, total, pct, elapsed)
-		}
-		if final {
-			fmt.Fprintln(out)
-		}
-	}
-
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				render(false)
-			case <-innerCtx.Done():
-				render(true)
-				return
-			}
-		}
-	}()
-
-	return func() {
-		cancel()
-		<-done
-	}
-}
+// Rough estimate of bytes per generated item (for --debug memory display)
+const estimatedItemBytes int = 512
 
 func NewMockCmd(opts *CommandOptions) *cobra.Command {
 	mockCmd := &cobra.Command{
 		Use:   "mock",
-		Short: "Generate mock data based from an object string or from template files",
-		Long: `Generate mock data based on --parse-str, --parse-json or --parse-json-file options.
+		Short: "Generate mock data based from a string, an object string or from template files",
+		Long: `Generate mock data based on --parse-str, --parse-json or --parse-json-file options, and output to --to-json-stdout and/or a file --to-json-file and/or --to-csv-file.
 
 Mock functions:
 
@@ -664,38 +108,30 @@ Controling the number of generated data:
 
 Output routing (--parse-json and --parse-json-file):
 
-* At least one of --to-stdout, --to-json-file or --to-csv-file must be provided.
-* --to-stdout <as-json|as-csv>: print the result to stdout as JSON or CSV.
-* --to-stdout-prettify: format the stdout output for readability (only valid with --to-stdout).
-* --to-json-file [filename]: write the result as JSON to a file.
+* Choose either to output to --to-json-stdout, --to-json-file or --to-csv-file.
+* --to-json-file <filename|"">: write the result as JSON to a file.
+	To use default filename, provide an empty string as filename.
   If no filename is given, defaults to output.json in the current working directory (for --parse-json)
   or to the template name without .template (for --parse-json-file).
-  Note: when specifying a filename, use = syntax: --to-json-file=myfile.json
-* --to-csv-file [filename]: write the result as CSV to a file.
+* --to-csv-file <filename|"">: write the result as CSV to a file.
+	To use default filename, provide an empty string as filename.
   If no filename is given, defaults to output.csv in the current working directory (for --parse-json)
   or to the template name without .template with a .csv extension (for --parse-json-file).
-  Note: when specifying a filename, use = syntax: --to-csv-file=myfile.csv
 * CSV output works best with flat (one-level-deep) JSON objects. Nested objects and arrays
   are serialised using their Go string representation.
 
 Examples:
   ktns mock --parse-str '{{ Person.name }}'
   ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number:{0}:{1}:{100} }} years old'
-  ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number:{0}:{1}:{100} }}" }' --to-stdout as-json
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-stdout as-csv
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-stdout as-json --to-stdout-prettify
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file mydata.json
-  ktns mock --parse-json '{ "phones[2]": "{{ Person.phoneNumber }}" }' --generate 5 --to-stdout as-json
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-stdout as-csv
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file myout.json
-  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-json-file
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file mydata.csv
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-csv-file
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-csv-file myout.csv
-  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-csv-file
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-stdout
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file ""
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-json-file "path/to/mydata.json"
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file ""
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-csv-file "path/to/mydata.csv"
+  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --generate 5 --to-json-file ""
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-stdout
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file ""
+  ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-json-file ""
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Set up OS signal handling so Ctrl-C cancels in-flight work cleanly.
@@ -706,9 +142,9 @@ Examples:
 			parseStr, _ := cmd.Flags().GetString("parse-str")
 			parseJson, _ := cmd.Flags().GetString("parse-json")
 			parseJsonFile, _ := cmd.Flags().GetString("parse-json-file")
+			parseJsonFileSet := cmd.Flags().Changed("parse-json-file")
 			generate, _ := cmd.Flags().GetInt("generate")
-			toStdout, _ := cmd.Flags().GetString("to-stdout")
-			toStdoutPrettify, _ := cmd.Flags().GetBool("to-stdout-prettify")
+			toJsonStdout, _ := cmd.Flags().GetBool("to-json-stdout")
 			toJsonFile, _ := cmd.Flags().GetString("to-json-file")
 			toJsonFileSet := cmd.Flags().Changed("to-json-file")
 			toCsvFile, _ := cmd.Flags().GetString("to-csv-file")
@@ -717,7 +153,7 @@ Examples:
 
 			if list {
 				mocker := mocker.New()
-				mocker.List(opts.Out)
+				mocker.CobraList(opts.Out)
 				return nil
 			}
 
@@ -751,125 +187,50 @@ Examples:
 				return fmt.Errorf("--generate option must be greater than 0")
 			}
 
-			const maxGenerate = 10_000_000
-			if generate > maxGenerate {
-				return fmt.Errorf("--generate option must not exceed %d", maxGenerate)
-			}
-
 			// Validate --parse-json-file filename constraint
 			if runningParseJsonFile && !strings.HasSuffix(filepath.Base(parseJsonFile), ".template.json") {
 				return fmt.Errorf("--parse-json-file requires the template filename to end with '.template.json', got '%s'", filepath.Base(parseJsonFile))
 			}
 
-			// Validate --to-stdout value
-			if toStdout != "" && toStdout != "as-json" && toStdout != "as-csv" {
-				return fmt.Errorf("--to-stdout only accepts 'as-json' or 'as-csv', got '%s'", toStdout)
-			}
-
-			// Validate --to-stdout-prettify requires --to-stdout
-			if toStdoutPrettify && toStdout == "" {
-				return fmt.Errorf("--to-stdout-prettify requires --to-stdout to be set")
-			}
-
 			// Validate --parse-str incompatibility with output flags
-			if runningParseStr && (toStdout != "" || toJsonFileSet || toCsvFileSet) {
-				return fmt.Errorf("--parse-str always outputs to stdout; --to-stdout, --to-json-file and --to-csv-file are not available with --parse-str")
+			if runningParseStr && (toJsonStdout || toJsonFileSet || toCsvFileSet) {
+				return fmt.Errorf("--parse-str always outputs to stdout; --to-json-stdout, --to-json-file and --to-csv-file are not available with --parse-str")
 			}
 
 			// Validate at least one output flag when using --parse-json or --parse-json-file
-			if !runningParseStr && toStdout == "" && !toJsonFileSet && !toCsvFileSet {
-				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-stdout, --to-json-file or --to-csv-file")
+			if !runningParseStr && !toJsonStdout && !toJsonFileSet && !toCsvFileSet {
+				return fmt.Errorf("--parse-json and --parse-json-file require at least one output flag: --to-json-stdout, --to-json-file or --to-csv-file")
 			}
 
 			if runningParseStr {
 				// Process the string
 				mocker := mocker.New()
-				mockedStr := processStr(parseStr, mocker, os.Stderr)
-
-				// Print the mocked string to STDOUT
-				fmt.Fprintf(opts.Out, "%s\n", mockedStr)
-			}
-
-			numWorkers := runtime.NumCPU()
-
-			// runConcurrent executes the worker pool path for a parsed template.
-			runConcurrent := func(parseMap map[string]any, source, defaultFilePath, defaultCsvFilePath string) error {
-				splitPoint := analyzeTemplate(parseMap, generate, numWorkers)
-
-				if splitPoint.UseSequential {
-					// Sequential path: small workload — no worker pool needed
-					mockerInst := mocker.New()
-					parseMaps := make([]map[string]any, generate)
-					for i := range generate {
-						cpParseMap := deepcopy.Copy(parseMap).(map[string]any)
-						if err := processJsonMap(cpParseMap, mockerInst); err != nil {
-							return fmt.Errorf("%w", err)
-						}
-						// processJsonMap mutates cpParseMap in place; no second deep copy needed.
-						parseMaps[i] = cpParseMap
-					}
-					for i := range parseMaps {
-						sanitizeJsonMap(parseMaps[i])
-					}
-					return routeOutput(parseMaps, generate, toStdout, toStdoutPrettify, toJsonFileSet, toJsonFile, toCsvFileSet, toCsvFile, source, defaultFilePath, defaultCsvFilePath, opts.Out)
-				}
-
-				// Concurrent path
-				jsonPath, csvPath, err := resolveOutputPaths(toJsonFileSet, toJsonFile, toCsvFileSet, toCsvFile, source, defaultFilePath, defaultCsvFilePath)
+				mockedStr, err := processMFStr(parseStr, mocker)
 				if err != nil {
 					return err
 				}
 
-				actualWorkers := min(numWorkers, splitPoint.Count)
-				stats := &RunStats{
-					CoresAvailable:  numWorkers,
-					CoresUsed:       actualWorkers,
-					TotalWeight:     splitPoint.TotalWeight,
-					WeightPerWorker: splitPoint.TotalWeight / int64(actualWorkers),
-					EstMemPeakBytes: int64(actualWorkers+2) * int64(targetSubBatch) * estimatedItemBytes,
-					StartTime:       time.Now(),
-				}
-
-				if debugMode {
-					debugStop := startDebugDisplay(ctx, stats, os.Stderr)
-					defer debugStop()
-				}
-
-				results := make(chan []map[string]any, numWorkers)
-
-				var poolErr error
-				var poolWg sync.WaitGroup
-				poolWg.Add(1)
-				go func() {
-					defer poolWg.Done()
-					poolErr = runWorkerPool(ctx, splitPoint, parseMap, actualWorkers, results, stats)
-				}()
-
-				// streamOutput blocks until results channel is closed by runWorkerPool
-				streamErr := streamOutput(ctx, results, generate, toStdout, toStdoutPrettify, toJsonFileSet, jsonPath, toCsvFileSet, csvPath, splitPoint, stats, opts.Out)
-
-				poolWg.Wait()
-
-				if streamErr != nil {
-					return streamErr
-				}
-				return poolErr
+				// Print the mocked string to STDOUT
+				fmt.Fprintf(opts.Out, "%s\n", mockedStr)
+				return nil
 			}
 
-			// Parse string json object from `--parse-json`
-			if runningParseJson {
-				// Parse the string object content
-				var parseMap map[string]any
-				if err := json.Unmarshal([]byte(parseJson), &parseMap); err != nil {
-					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
-				}
-
-				if err := runConcurrent(parseMap, "parse-json", "", ""); err != nil {
+			var jsonPath, csvPath string
+			if toJsonFileSet || toCsvFileSet {
+				var err error
+				jsonPath, csvPath, err = resolveOutputFilePaths(parseJsonFileSet, parseJsonFile, toJsonFileSet, toJsonFile, toCsvFileSet, toCsvFile)
+				if err != nil {
 					return err
 				}
 			}
 
-			// Parse object from `--parse-json-file` file
+			var rawJson map[string]any
+			if runningParseJson {
+				// Parse the raw template object content
+				if err := json.Unmarshal([]byte(parseJson), &rawJson); err != nil {
+					return fmt.Errorf("failed to parse JSON from the provided --parse-json '%w'", err)
+				}
+			}
 			if runningParseJsonFile {
 				// Verify the file exists
 				if _, err := os.Stat(parseJsonFile); os.IsNotExist(err) {
@@ -882,21 +243,51 @@ Examples:
 					return fmt.Errorf("failed to read --parse-json-file '%w'", err)
 				}
 
-				// Parse the template file content
-				var parseMap map[string]any
-				if err = json.Unmarshal(templateFileContent, &parseMap); err != nil {
+				// Parse the raw template object content
+				if err = json.Unmarshal(templateFileContent, &rawJson); err != nil {
 					return fmt.Errorf("failed to parse JSON from --parse-json-file '%w'", err)
 				}
+			}
 
-				// Determine the default output file path: same directory as the template file, .template.json → .json
-				defaultFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
-				defaultFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultFileName)
-				defaultCsvFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".csv", 1)
-				defaultCsvFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultCsvFileName)
+			usedWorkers := 1
+			availableWorkers := runtime.NumCPU()
+			estimatedWork := estimateMFJson(rawJson, generate)
 
-				if err := runConcurrent(parseMap, "parse-json-file", defaultFilePath, defaultCsvFilePath); err != nil {
-					return err
+			stats := &DebugStats{
+				CoresAvailable:  availableWorkers,
+				CoresUsed:       usedWorkers,
+				TotalWeight:     estimatedWork,
+				WeightPerWorker: estimatedWork / int64(usedWorkers),
+				EstMemPeakBytes: 0,
+				StartTime:       time.Now(),
+			}
+
+			if debugMode {
+				debugStop := startDebugRoutine(ctx, stats, os.Stderr)
+				defer debugStop()
+			}
+
+			mocker := mocker.New()
+
+			processedJsonArr := make([]map[string]any, generate)
+			for i := range generate {
+				cpRawJson := deepcopy.Copy(rawJson).(map[string]any)
+				if err := processMFJson(cpRawJson, mocker, stats); err != nil {
+					return fmt.Errorf("%w", err)
 				}
+				processedJsonArr[i] = cpRawJson
+			}
+
+			for i := range processedJsonArr {
+				sanitizeGeneratedJson(processedJsonArr[i])
+			}
+
+			var outWriter io.Writer
+			if toJsonStdout {
+				outWriter = opts.Out
+			}
+			if err := routeOutput(processedJsonArr, generate, jsonPath, csvPath, outWriter); err != nil {
+				return fmt.Errorf("%w", err)
 			}
 
 			return nil
@@ -908,16 +299,9 @@ Examples:
 	mockCmd.Flags().String("parse-json", "", "pass a JSON object as a string. The mock data will be generated based on this provided json object")
 	mockCmd.Flags().String("parse-json-file", "", "pass a path to a single .template.json file. The mock data will be generated based on this file")
 	mockCmd.Flags().Int("generate", 1, "pass the desired amount of root objects that will be generated (only available for --parse-json and --parse-json-file)")
-	mockCmd.Flags().String("to-stdout", "", "output result to stdout as 'as-json' or 'as-csv'")
-	mockCmd.Flags().Bool("to-stdout-prettify", false, "prettify the stdout output (only valid with --to-stdout)")
+	mockCmd.Flags().Bool("to-json-stdout", false, "output result as JSON to stdout")
 	mockCmd.Flags().String("to-json-file", "", "output result as JSON to a file; optional filename argument")
-
-	// Allow --to-json-file to be used without a value (uses sentinel "_use_default_")
-	mockCmd.Flags().Lookup("to-json-file").NoOptDefVal = "_use_default_"
-
 	mockCmd.Flags().String("to-csv-file", "", "output result as CSV to a file; optional filename argument")
-	mockCmd.Flags().Lookup("to-csv-file").NoOptDefVal = "_use_default_"
-
 	mockCmd.Flags().Bool("debug", false, "show live generation progress on stderr (opt-in, only active when worker pool is used)")
 
 	// Configure cobra ouput streams to use the custom 'Out'
@@ -926,13 +310,266 @@ Examples:
 	return mockCmd
 }
 
-// Splits a raw string of format "func:{arg1}:{arg2}:...".
+// processMFStr process mock functions from a string. The function looks for patterns in the format {{ functionName:{arg1}:{arg2}:{argN} }}.
+func processMFStr(parseStr string, mocker *mocker.Mock) (string, error) {
+	var parsedStr strings.Builder
+	s := parseStr
+	for {
+		// Find the next opening "{{"
+		start := strings.Index(s, "{{")
+		if start == -1 {
+			parsedStr.WriteString(s)
+			break
+		}
+		// Write everything before the opening "{{"
+		parsedStr.WriteString(s[:start])
+		s = s[start+2:] // skip past "{{"
+
+		// Find the closing "}}" — single "}" is allowed inside
+		end := -1
+		for i := 0; i < len(s)-1; i++ {
+			if s[i] == '}' && s[i+1] == '}' {
+				end = i
+				break
+			}
+		}
+		if end == -1 {
+			// No closing "}}" found — treat the rest as literal
+			parsedStr.WriteString("{{")
+			parsedStr.WriteString(s)
+			break
+		}
+
+		inner := strings.TrimSpace(s[:end])
+		s = s[end+2:] // skip past "}}"
+
+		functionName, params, err := parseMockFunction(inner)
+		if err != nil {
+			return "", fmt.Errorf("%w", err)
+		} else {
+			mockValue, err := mocker.Generate(functionName, params)
+			if err != nil {
+				return "", fmt.Errorf("%w", err)
+			} else {
+				parsedStr.WriteString(mockValue)
+			}
+		}
+	}
+	return parsedStr.String(), nil
+}
+
+// estimateMFJson walks the parseMap to find all [n] patterns and estimates the total work
+// by calculating the weight of the nodes found. The weight is based on the number of generations
+// to be made (including nested generations) and the number of items generated at each level.
+func estimateMFJson(parseMap map[string]any, generate int) int64 {
+	var traverse func(map[string]any) int64
+
+	traverse = func(rawJson map[string]any) int64 {
+		var totalWeight int64 = 0
+		for key, val := range rawJson {
+			weight := int64(0)
+			switch typedValue := val.(type) {
+			case string:
+				weight = 1
+			case map[string]any:
+				weight = traverse(typedValue)
+			case []any:
+				for _, item := range typedValue {
+					if _, ok := item.(string); ok {
+						weight += 1
+					} else if itemMap, ok := item.(map[string]any); ok {
+						weight += traverse(itemMap)
+					}
+				}
+			}
+
+			inBracketsMatches := bracketNumberRegex.FindStringSubmatch(key)
+			if len(inBracketsMatches) == 2 {
+				count, err := strconv.Atoi(inBracketsMatches[1])
+				if err == nil && count > 0 {
+					weight *= int64(count)
+				}
+			}
+			totalWeight += weight
+		}
+		return totalWeight
+	}
+
+	return traverse(parseMap) * int64(generate)
+}
+
+// processMFJson iterates through the parsed json map and processes each value.
+// It replaces string values with generated mock data based on the function name and parameters.
+// It handles nested maps and arrays of strings or maps.
+// Returns an error if any value is not a string or map.
+func processMFJson(parseMap map[string]any, mocker *mocker.Mock, stats *DebugStats) error {
+	objKeys := make([]string, 0, len(parseMap))
+	for key := range parseMap {
+		objKeys = append(objKeys, key)
+	}
+
+	for keyIndex := 0; keyIndex < len(objKeys); {
+		objKey := objKeys[keyIndex]
+		switch typedValue := parseMap[objKey].(type) {
+		case string:
+			// try to find [n] in the "key"
+			generateAmount, err := extractDigitInBrackets("object", objKey)
+			if err != nil {
+				return err
+			}
+			// try to find the mock function in the "value"
+			interpretedValue, isMockFunction := parseDynamicValue(typedValue)
+			// if it's not a mock function, just replace the value
+			if !isMockFunction {
+				parseMap[objKey] = interpretedValue
+				keyIndex++
+				if stats != nil {
+					stats.Generated.Add(1)
+				}
+				continue
+			}
+			// if it's a mock function, extract the function name and parameters
+			functionName, params, err := parseMockFunction(interpretedValue)
+			if err != nil {
+				return err
+			}
+			// either generate array of values, otherwise only one value
+			if generateAmount > 1 {
+				parseMap[objKey] = make([]string, generateAmount)
+				for i := range generateAmount {
+					mockValue, err := mocker.Generate(functionName, params)
+					if err != nil {
+						return err
+					}
+					parseMap[objKey].([]string)[i] = mockValue
+				}
+			} else {
+				mockValue, err := mocker.Generate(functionName, params)
+				if err != nil {
+					return err
+				}
+				parseMap[objKey] = mockValue
+			}
+			keyIndex++
+			if stats != nil {
+				stats.Generated.Add(int64(generateAmount))
+			}
+		case map[string]any:
+			// try to find [n] in the "key"
+			generateAmount, err := extractDigitInBrackets("object", objKey)
+			if err != nil {
+				return err
+			}
+			// if generating multiple values, convert the map to a slice of maps (but force the type to generic any) and reprocess again
+			if generateAmount > 1 {
+				convertedValue := make([]any, generateAmount)
+				for i := range generateAmount {
+					convertedValue[i] = deepcopy.Copy(typedValue)
+				}
+				parseMap[objKey] = convertedValue
+			} else {
+				if err := processMFJson(typedValue, mocker, stats); err != nil {
+					return err
+				}
+				keyIndex++
+			}
+		case []any:
+			for itemKey, item := range typedValue {
+				if itemStr, ok := item.(string); ok {
+					interpretedValue, isMockFunction := parseDynamicValue(itemStr)
+					if !isMockFunction {
+						typedValue[itemKey] = interpretedValue
+						if stats != nil {
+							stats.Generated.Add(1)
+						}
+						continue
+					}
+					functionName, params, err := parseMockFunction(interpretedValue)
+					if err != nil {
+						return err
+					}
+					mockValue, err := mocker.Generate(functionName, params)
+					if err != nil {
+						return err
+					}
+					typedValue[itemKey] = mockValue
+					if stats != nil {
+						stats.Generated.Add(1)
+					}
+				} else if itemMap, ok := item.(map[string]any); ok {
+					err := processMFJson(itemMap, mocker, stats)
+					if err != nil {
+						return err
+					}
+				} else {
+					return fmt.Errorf("value '%v' is not a string or map", item)
+				}
+			}
+			keyIndex++
+		default:
+			return fmt.Errorf("value '%v' is not a string, map or array", typedValue)
+		}
+	}
+	return nil
+}
+
+// sanitizeGeneratedJson iterates through the parsed json map and sanitizes the keys by removing segments between bracketes (e.g. [digits]).
+// It handles nested maps.
+func sanitizeGeneratedJson(parseMap map[string]any) {
+	// Clone keys to avoid modifying map during iteration
+	objKeys := make([]string, 0, len(parseMap))
+	for objKey := range parseMap {
+		objKeys = append(objKeys, objKey)
+	}
+
+	for _, objKey := range objKeys {
+		objValue := parseMap[objKey]
+		sanitizedKey := sanitizeKeyWithBrackets(objKey)
+
+		// Recurse on nested maps
+		if mapValue, ok := objValue.(map[string]any); ok {
+			sanitizeGeneratedJson(mapValue)
+		}
+
+		// Recurse into array elements that are maps
+		if sliceValue, ok := objValue.([]any); ok {
+			for _, elem := range sliceValue {
+				if elemMap, ok := elem.(map[string]any); ok {
+					sanitizeGeneratedJson(elemMap)
+				}
+			}
+		}
+
+		if sanitizedKey != objKey {
+			parseMap[sanitizedKey] = objValue
+			delete(parseMap, objKey)
+		}
+	}
+}
+
+// parseDynamicValue interprets a string value, checking if it contains a mock function between {{ }}.
+// If it does, it returns the function name and true.
+// If not, it returns the original string and false.
+func parseDynamicValue(rawValue string) (string, bool) {
+	if rawValue == "" {
+		return "", false
+	}
+
+	matches := parseDynamicValueRegex.FindStringSubmatch(rawValue)
+
+	if len(matches) > 0 {
+		return strings.TrimSpace(matches[1]), true
+	}
+	return rawValue, false
+}
+
+// parseMockFunction splits a raw string of format "func:{arg1}:{arg2}:...".
 // It handles regex args wrapped with slashes (/.../) and value args wrapped with curly
 // braces ({...}) to avoid splitting inside them. The colon (:) outside both delimiters
 // acts as the separator between positional parameters.
 // Returns: function name, slice of parameter strings, and an error if any parameter
 // after the function name is not wrapped in {…} or /…/.
-func extractMockMethod(rawValue string) (string, []string, error) {
+func parseMockFunction(rawValue string) (string, []string, error) {
 	if rawValue == "" {
 		return "", nil, nil
 	}
@@ -993,219 +630,10 @@ func extractMockMethod(rawValue string) (string, []string, error) {
 	if paramCount >= 1 && inBare {
 		return "", nil, fmt.Errorf("mock function parameter '%s' must be wrapped in {…} for a value or /…/ for a regex", buf.String())
 	}
-
 	return parts[0], parts[1:], nil
 }
 
-// Interprets a string value, checking if it contains a mock function between {{ }}.
-// If it does, it returns the function name and true.
-// If not, it returns the original string and false.
-func interpretString(rawValue string) (string, bool) {
-	if rawValue == "" {
-		return "", false
-	}
-
-	matches := interpretStringRegex.FindStringSubmatch(rawValue)
-
-	if len(matches) > 0 {
-		return strings.TrimSpace(matches[1]), true
-	}
-
-	return rawValue, false
-}
-
-// Iterates through the parsed json map and processes each value.
-// It replaces string values with generated mock data based on the function name and parameters.
-// It handles nested maps and arrays of strings or maps.
-// Returns an error if any value is not a string or map.
-func processJsonMap(parseMap map[string]any, mocker *mocker.Mock) error {
-	objKeys := make([]string, 0, len(parseMap))
-	for key := range parseMap {
-		objKeys = append(objKeys, key)
-	}
-
-	for keyIndex := 0; keyIndex < len(objKeys); {
-		objKey := objKeys[keyIndex]
-		switch typedValue := parseMap[objKey].(type) {
-		case string:
-			// try to find [digit] in the "key"
-			generateAmount, err := extractDigitInBrackets("object", objKey)
-			if err != nil {
-				return err
-			}
-			// try to find the mock function in the "value"
-			interpretedValue, isMockFunction := interpretString(typedValue)
-			// if it's not a mock function, just replace the value
-			if !isMockFunction {
-				parseMap[objKey] = interpretedValue
-				keyIndex++
-				continue
-			}
-			// if it's a mock function, extract the function name and parameters
-			functionName, params, err := extractMockMethod(interpretedValue)
-			if err != nil {
-				return err
-			}
-			// either generate array of values, otherwise only one value
-			if generateAmount > 1 {
-				parseMap[objKey] = make([]string, generateAmount)
-				for i := range generateAmount {
-					mockValue, err := mocker.Generate(functionName, params)
-					if err != nil {
-						return err
-					}
-					parseMap[objKey].([]string)[i] = mockValue
-				}
-			} else {
-				mockValue, err := mocker.Generate(functionName, params)
-				if err != nil {
-					return err
-				}
-				parseMap[objKey] = mockValue
-			}
-			keyIndex++
-		case map[string]any:
-			// try to find [digit] in the "key"
-			generateAmount, err := extractDigitInBrackets("object", objKey)
-			if err != nil {
-				return err
-			}
-			// if generating multiple values, convert the map to a slice of maps (but force the type to generic any) and reprocess again
-			if generateAmount > 1 {
-				convertedValue := make([]any, generateAmount)
-				for i := range generateAmount {
-					convertedValue[i] = deepcopy.Copy(typedValue)
-				}
-				parseMap[objKey] = convertedValue
-			} else {
-				if err := processJsonMap(typedValue, mocker); err != nil {
-					return err
-				}
-				keyIndex++
-			}
-		case []any:
-			for itemKey, item := range typedValue {
-				if itemStr, ok := item.(string); ok {
-					interpretedValue, isMockFunction := interpretString(itemStr)
-					if !isMockFunction {
-						typedValue[itemKey] = interpretedValue
-						continue
-					}
-					functionName, params, err := extractMockMethod(interpretedValue)
-					if err != nil {
-						return err
-					}
-					mockValue, err := mocker.Generate(functionName, params)
-					if err != nil {
-						return err
-					}
-					typedValue[itemKey] = mockValue
-				} else if itemMap, ok := item.(map[string]any); ok {
-					err := processJsonMap(itemMap, mocker)
-					if err != nil {
-						return err
-					}
-				} else {
-					return fmt.Errorf("value '%v' is not a string or map", item)
-				}
-			}
-			keyIndex++
-		default:
-			return fmt.Errorf("value '%v' is not a string, map or array", typedValue)
-		}
-	}
-	return nil
-}
-
-// Iterates through the parsed json map and sanitizes the keys by removing segments between bracketes (e.g. [digits]).
-// It handles nested maps.
-func sanitizeJsonMap(parseMap map[string]any) {
-	// Clone keys to avoid modifying map during iteration
-	objKeys := make([]string, 0, len(parseMap))
-	for objKey := range parseMap {
-		objKeys = append(objKeys, objKey)
-	}
-
-	for _, objKey := range objKeys {
-		objValue := parseMap[objKey]
-		sanitizedKey := sanitizeKeyWithBrackets(objKey)
-
-		// Recurse on nested maps
-		if mapValue, ok := objValue.(map[string]any); ok {
-			sanitizeJsonMap(mapValue)
-		}
-
-		// Recurse into array elements that are maps
-		if sliceValue, ok := objValue.([]any); ok {
-			for _, elem := range sliceValue {
-				if elemMap, ok := elem.(map[string]any); ok {
-					sanitizeJsonMap(elemMap)
-				}
-			}
-		}
-
-		if sanitizedKey != objKey {
-			parseMap[sanitizedKey] = objValue
-			delete(parseMap, objKey)
-		}
-	}
-}
-
-// Process a simple string value, checking if it contains a mock function.
-// If it does, it generates the mock value using the mocker.
-// If not, it returns the original string.
-// Mock function calls are delimited by {{ and }} where }} is always the closing
-// delimiter — single } inside the content (e.g. inside {value} param tokens) is allowed.
-func processStr(parseStr string, mocker *mocker.Mock, errOut io.Writer) string {
-	var out strings.Builder
-	s := parseStr
-	for {
-		// Find the next opening "{{"
-		start := strings.Index(s, "{{")
-		if start == -1 {
-			out.WriteString(s)
-			break
-		}
-		// Write everything before the opening "{{"
-		out.WriteString(s[:start])
-		s = s[start+2:] // skip past "{{"
-
-		// Find the closing "}}" — single "}" is allowed inside
-		end := -1
-		for i := 0; i < len(s)-1; i++ {
-			if s[i] == '}' && s[i+1] == '}' {
-				end = i
-				break
-			}
-		}
-		if end == -1 {
-			// No closing "}}" found — treat the rest as literal
-			out.WriteString("{{")
-			out.WriteString(s)
-			break
-		}
-
-		inner := strings.TrimSpace(s[:end])
-		s = s[end+2:] // skip past "}}"
-
-		functionName, params, err := extractMockMethod(inner)
-		if err != nil {
-			fmt.Fprintf(errOut, "warning: --parse-str mock substitution error: %v\n", err)
-			out.WriteString(fmt.Sprintf("[%v]", err))
-		} else {
-			mockValue, err := mocker.Generate(functionName, params)
-			if err != nil {
-				fmt.Fprintf(errOut, "warning: --parse-str mock substitution error: %v\n", err)
-				out.WriteString(fmt.Sprintf("[%v]", err))
-			} else {
-				out.WriteString(mockValue)
-			}
-		}
-	}
-	return out.String()
-}
-
-// Extracts a digit from a string in the format "content[<digit>]".
+// extractDigitInBrackets extracts a digit from a string in the format "content[<digit>]".
 // Only handles "object" place values. Returns an error immediately if place != "object".
 // If the string doesn't contain brackets, it returns 1.
 func extractDigitInBrackets(place string, str string) (int, error) {
@@ -1213,7 +641,7 @@ func extractDigitInBrackets(place string, str string) (int, error) {
 		return 0, fmt.Errorf("invalid value '%s' (must be 'object')", place)
 	}
 
-	matches := objKeyNumberRegex.FindStringSubmatch(str)
+	matches := bracketNumberRegex.FindStringSubmatch(str)
 
 	if len(matches) != 2 {
 		if !bracketCharRegex.MatchString(str) {
@@ -1234,7 +662,7 @@ func extractDigitInBrackets(place string, str string) (int, error) {
 	return digit, nil
 }
 
-// Removes the segment of a string between brackets, including the brackets themselves.
+// sanitizeKeyWithBrackets removes the segment of a string between brackets, including the brackets themselves.
 // It returns the cleaned string.
 func sanitizeKeyWithBrackets(str string) string {
 	startBracket := strings.Index(str, "[")
@@ -1249,25 +677,11 @@ func sanitizeKeyWithBrackets(str string) string {
 	return str
 }
 
-// workingDir returns the current working directory.
-// Used to resolve the default output path for --to-json-file and --to-csv-file
-// when no explicit filename is provided and the source is not --parse-json-file.
-func workingDir() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not determine working directory: %w", err)
-	}
-	return dir, nil
-}
-
-// marshalAsCSV serialises a slice of flat maps to CSV.
-// If prettify is true, columns are padded to equal width for readability.
-// If prettify is false, output is standard compact RFC 4180 CSV.
+// marshalAsCSV serialises a slice of flat maps to CSV (standard RFC 4180).
 // Column order is determined by the sorted union of all keys across all rows.
 // Values are always coerced to strings.
-// Note: works best with flat (one-level-deep) JSON objects. Nested objects/arrays
-// will be serialised as their Go string representation.
-func marshalAsCSV(parseMaps []map[string]any, prettify bool) (string, error) {
+// Nested objects/arrays will be serialised as their Go string representation.
+func marshalAsCSV(parseMaps []map[string]any) (string, error) {
 	// Collect unique keys across all rows
 	keySet := make(map[string]struct{})
 	for _, m := range parseMaps {
@@ -1294,95 +708,28 @@ func marshalAsCSV(parseMaps []map[string]any, prettify bool) (string, error) {
 		rows = append(rows, row)
 	}
 
-	if !prettify {
-		var sb strings.Builder
-		w := csv.NewWriter(&sb)
-		if err := w.WriteAll(rows); err != nil {
-			return "", fmt.Errorf("error writing CSV: %w", err)
-		}
-		w.Flush()
-		if err := w.Error(); err != nil {
-			return "", fmt.Errorf("error flushing CSV: %w", err)
-		}
-		// WriteAll adds a trailing newline; trim it so callers can add their own
-		return strings.TrimRight(sb.String(), "\n"), nil
-	}
-
-	// Prettified: compute max column width
-	colWidths := make([]int, len(headers))
-	for _, row := range rows {
-		for i, cell := range row {
-			if len(cell) > colWidths[i] {
-				colWidths[i] = len(cell)
-			}
-		}
-	}
-
 	var sb strings.Builder
-	for rowIdx, row := range rows {
-		// Pad each cell
-		cells := make([]string, len(row))
-		for i, cell := range row {
-			cells[i] = fmt.Sprintf("%-*s", colWidths[i], cell)
-		}
-		sb.WriteString(strings.Join(cells, " | "))
-		sb.WriteString("\n")
-		// Separator after header row
-		if rowIdx == 0 {
-			sepParts := make([]string, len(headers))
-			for i := range headers {
-				sepParts[i] = strings.Repeat("-", colWidths[i])
-			}
-			sb.WriteString(strings.Join(sepParts, "---"))
-			sb.WriteString("\n")
-		}
+	w := csv.NewWriter(&sb)
+	if err := w.WriteAll(rows); err != nil {
+		return "", fmt.Errorf("error writing CSV: %w", err)
 	}
-
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return "", fmt.Errorf("error flushing CSV: %w", err)
+	}
+	// WriteAll adds a trailing newline; trim it so callers can add their own
 	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
-// resolveOutputPaths resolves the final JSON and CSV output file paths from flags and defaults.
-// Returns empty strings for paths whose corresponding flag was not set.
-func resolveOutputPaths(
-	toJsonFileSet bool,
-	toJsonFileValue string,
-	toCsvFileSet bool,
-	toCsvFileValue string,
-	source string,
-	defaultFilePath string,
-	defaultCsvFilePath string,
-) (jsonPath string, csvPath string, err error) {
-	if toJsonFileSet {
-		switch {
-		case toJsonFileValue != "" && toJsonFileValue != "_use_default_":
-			jsonPath = toJsonFileValue
-		case source == "parse-json-file":
-			jsonPath = defaultFilePath
-		default:
-			dir, e := workingDir()
-			if e != nil {
-				return "", "", e
-			}
-			jsonPath = filepath.Join(dir, "output.json")
-		}
+// workingDir returns the current working directory.
+// Used to resolve the default output path for --to-json-file and --to-csv-file
+// when no explicit filename is provided and the source is not --parse-json-file.
+func workingDir() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not determine working directory: %w", err)
 	}
-
-	if toCsvFileSet {
-		switch {
-		case toCsvFileValue != "" && toCsvFileValue != "_use_default_":
-			csvPath = toCsvFileValue
-		case source == "parse-json-file":
-			csvPath = defaultCsvFilePath
-		default:
-			dir, e := workingDir()
-			if e != nil {
-				return "", "", e
-			}
-			csvPath = filepath.Join(dir, "output.csv")
-		}
-	}
-
-	return jsonPath, csvPath, nil
+	return dir, nil
 }
 
 // atomicFileCreate opens a temp file in the same directory as finalPath.
@@ -1408,575 +755,182 @@ func atomicFileCreate(finalPath string) (f *os.File, commit func() error, abort 
 	return f, commit, abort, nil
 }
 
-// extractCsvHeaders sanitizes a copy of the template and returns the sorted top-level keys.
-// Used to write the CSV header row before any workers start.
-func extractCsvHeaders(template map[string]any) []string {
-	cp := deepcopy.Copy(template).(map[string]any)
-	sanitizeJsonMap(cp)
-	headers := make([]string, 0, len(cp))
-	for k := range cp {
-		headers = append(headers, k)
-	}
-	sort.Strings(headers)
-	return headers
-}
-
-// streamOutput reads sub-batches from results and writes them to all configured sinks
-// (stdout JSON, stdout CSV, JSON file, CSV file). It terminates when results is closed.
-// On context cancellation, any in-progress temp files are aborted.
-//
-// When splitPoint.Depth > 0 (inner split), the first received batch is a sentinel
-// containing the partially-processed parent context (key "_ktns_parent_ctx_"). All
-// subsequent batches are inner-array items that are accumulated and assembled into
-// the parent before a single root write.
-func streamOutput(
-	ctx context.Context,
-	results <-chan []map[string]any,
-	generate int,
-	toStdout string,
-	toStdoutPrettify bool,
-	toJsonFileSet bool,
-	jsonPath string,
-	toCsvFileSet bool,
-	csvPath string,
-	splitPoint SplitPoint,
-	stats *RunStats,
-	out io.Writer,
-) error {
-	// --- stdout JSON setup ---
-	var stdoutBuf *bufio.Writer
-	var stdoutEnc *json.Encoder
-	if toStdout == "as-json" {
-		stdoutBuf = bufio.NewWriter(out)
-		stdoutEnc = json.NewEncoder(stdoutBuf)
-		if generate == 1 {
-			// single object — no wrapping array
-		} else {
-			if _, err := stdoutBuf.WriteString("["); err != nil {
-				return fmt.Errorf("error writing JSON array open: %w", err)
-			}
-		}
-	}
-
-	// --- stdout CSV setup ---
-	var stdoutCsvBuf *bufio.Writer
-	var stdoutCsvWriter *csv.Writer
-	var csvHeaders []string
-	if toStdout == "as-csv" || toCsvFileSet {
-		// headers are extracted once from the template before workers start —
-		// this function receives them via the first batch shape. Since templates
-		// are homogeneous we determine headers from the first item of the first batch.
-		// The actual write happens after the first batch arrives below.
-	}
-	if toStdout == "as-csv" {
-		stdoutCsvBuf = bufio.NewWriter(out)
-		stdoutCsvWriter = csv.NewWriter(stdoutCsvBuf)
-	}
-
-	// --- JSON file setup ---
-	var jsonFile *os.File
-	var jsonFileCommit func() error
-	var jsonFileAbort func()
-	var jsonFileBuf *bufio.Writer
-	var jsonFileEnc *json.Encoder
-	if toJsonFileSet {
-		var err error
-		jsonFile, jsonFileCommit, jsonFileAbort, err = atomicFileCreate(jsonPath)
-		if err != nil {
-			return err
-		}
-		jsonFileBuf = bufio.NewWriter(jsonFile)
-		jsonFileEnc = json.NewEncoder(jsonFileBuf)
-		if generate == 1 {
-			// single object — no wrapping array
-		} else {
-			if _, err := jsonFileBuf.WriteString("["); err != nil {
-				jsonFileAbort()
-				return fmt.Errorf("error writing JSON array open to file: %w", err)
-			}
-		}
-	}
-
-	// --- CSV file setup ---
-	var csvFile *os.File
-	var csvFileCommit func() error
-	var csvFileAbort func()
-	var csvFileBuf *bufio.Writer
-	var csvFileWriter *csv.Writer
-	if toCsvFileSet {
-		var err error
-		csvFile, csvFileCommit, csvFileAbort, err = atomicFileCreate(csvPath)
-		if err != nil {
-			if jsonFileAbort != nil {
-				jsonFileAbort()
-			}
-			return err
-		}
-		csvFileBuf = bufio.NewWriter(csvFile)
-		csvFileWriter = csv.NewWriter(csvFileBuf)
-	}
-
-	// abort helper — called on any error
-	abortAll := func() {
-		if jsonFileAbort != nil {
-			jsonFileAbort()
-		}
-		if csvFileAbort != nil {
-			csvFileAbort()
-		}
-	}
-
-	firstItem := true
-
-	writeItem := func(item map[string]any, sep bool) error {
-		// Stdout JSON
-		if stdoutEnc != nil {
-			if generate > 1 {
-				if sep {
-					if _, err := stdoutBuf.WriteString(","); err != nil {
-						return err
-					}
-				}
-				if toStdoutPrettify {
-					b, err := json.MarshalIndent(item, "", "  ")
-					if err != nil {
-						return err
-					}
-					_, err = stdoutBuf.Write(b)
-					if err != nil {
-						return err
-					}
-				} else {
-					if err := stdoutEnc.Encode(item); err != nil {
-						return err
-					}
-					// Encode adds a trailing newline; for array elements inside [...]
-					// we don't want the newline after each element except the last,
-					// but correctness matters more than prettiness for the array path.
-				}
-			} else {
-				// generate == 1: bare object
-				if toStdoutPrettify {
-					b, err := json.MarshalIndent(item, "", "  ")
-					if err != nil {
-						return err
-					}
-					_, err = stdoutBuf.Write(b)
-					if err != nil {
-						return err
-					}
-					_, err = stdoutBuf.WriteString("\n")
-					return err
-				}
-				if err := stdoutEnc.Encode(item); err != nil {
-					return err
-				}
-			}
-		}
-
-		// Stdout CSV
-		if stdoutCsvWriter != nil {
-			if len(csvHeaders) == 0 {
-				// derive headers from first item
-				for k := range item {
-					csvHeaders = append(csvHeaders, k)
-				}
-				sort.Strings(csvHeaders)
-				if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
-					return err
-				}
-			}
-			row := make([]string, len(csvHeaders))
-			for i, h := range csvHeaders {
-				if val, ok := item[h]; ok {
-					row[i] = fmt.Sprintf("%v", val)
-				}
-			}
-			if err := stdoutCsvWriter.Write(row); err != nil {
-				return err
-			}
-		}
-
-		// JSON file
-		if jsonFileEnc != nil {
-			if generate > 1 {
-				if sep {
-					if _, err := jsonFileBuf.WriteString(","); err != nil {
-						return err
-					}
-				}
-			}
-			// Files are always pretty-printed for readability
-			b, err := json.MarshalIndent(item, "", "  ")
-			if err != nil {
-				return err
-			}
-			n, err := jsonFileBuf.Write(b)
-			if err != nil {
-				return err
-			}
-			stats.BytesWritten.Add(int64(n))
-		}
-
-		// CSV file
-		// TODO(debug-csv-bytes): BytesWritten is only tracked for JSON file output.
-		// CSV file byte tracking would require a counting writer wrapper around csvFileBuf.
-		if csvFileWriter != nil {
-			row := make([]string, len(csvHeaders))
-			for i, h := range csvHeaders {
-				if val, ok := item[h]; ok {
-					row[i] = fmt.Sprintf("%v", val)
-				}
-			}
-			if err := csvFileWriter.Write(row); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
-
-	// Track whether any header has been written to CSV sinks
-	csvHeaderWritten := false
-
-	// Inner-split path: accumulate inner-array items and assemble the final root object.
-	// Workers send a sentinel batch first (carrying the parent context), followed by
-	// sub-batches of inner-array items. After all items are received the writer
-	// assembles the final object, sanitizes it, and writes it once.
-	//
-	// Memory note: the entire inner array is buffered here until all sub-batches
-	// arrive (O(inner_count × item_size)).
-	// TODO(concurrency-inner-streaming): eliminate the buffer for large inner arrays.
-	if splitPoint.Depth > 0 {
-		const parentCtxKey = "_ktns_parent_ctx_"
-		// TODO(concurrency-siblings): only KeyPaths[0] is used here.
-		// Full sibling-sequential output routing is deferred.
-		cleanKey := sanitizeKeyWithBrackets(splitPoint.KeyPaths[0])
-
-		// Receive the parent context from the first batch (sentinel).
-		var parentCtx map[string]any
-		for firstBatch := range results {
-			select {
-			case <-ctx.Done():
-				// drain the channel
-				for range results {
-				}
-				abortAll()
-				return ctx.Err()
-			default:
-			}
-			if len(firstBatch) == 1 {
-				if nested, ok := firstBatch[0][parentCtxKey]; ok {
-					if m, ok := nested.(map[string]any); ok {
-						parentCtx = m
-						break
-					}
-				}
-			}
-			// If for some reason the sentinel is not the first batch, treat as error.
-			abortAll()
-			return fmt.Errorf("inner split: expected parent context sentinel as first batch")
-		}
-		if parentCtx == nil {
-			abortAll()
-			return fmt.Errorf("inner split: parent context sentinel not received")
-		}
-
-		// Accumulate all inner-array items from subsequent batches.
-		var innerSlice []any
-		for batch := range results {
-			select {
-			case <-ctx.Done():
-				for range results {
-				}
-				abortAll()
-				return ctx.Err()
-			default:
-			}
-			for _, item := range batch {
-				innerSlice = append(innerSlice, item)
-			}
-		}
-
-		// Assemble the final root object and sanitize it.
-		parentCtx[splitPoint.KeyPaths[0]] = innerSlice // use raw bracket key — sanitizeJsonMap will rename it
-		sanitizeJsonMap(parentCtx)
-		// parentCtx[cleanKey] now holds the assembled inner slice.
-		_ = cleanKey // used implicitly via sanitizeJsonMap renaming
-
-		// Write CSV headers from the assembled parent object if needed.
-		if (stdoutCsvWriter != nil || csvFileWriter != nil) && !csvHeaderWritten {
-			for k := range parentCtx {
-				csvHeaders = append(csvHeaders, k)
-			}
-			sort.Strings(csvHeaders)
-			csvHeaderWritten = true
-			if stdoutCsvWriter != nil {
-				if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
-					abortAll()
-					return err
-				}
-			}
-			if csvFileWriter != nil {
-				if err := csvFileWriter.Write(csvHeaders); err != nil {
-					abortAll()
-					return err
-				}
-			}
-		}
-
-		// Write the assembled root object (always a bare object since generate == 1).
-		if err := writeItem(parentCtx, false); err != nil {
-			abortAll()
-			return fmt.Errorf("error writing inner-split output: %w", err)
-		}
-	} else {
-		// Root-split path: each received item is a complete root object.
-		for batch := range results {
-			select {
-			case <-ctx.Done():
-				abortAll()
-				return ctx.Err()
-			default:
-			}
-
-			for _, item := range batch {
-				sep := !firstItem
-
-				// Write CSV headers on very first item if not already done
-				if firstItem && (stdoutCsvWriter != nil || csvFileWriter != nil) && !csvHeaderWritten {
-					for k := range item {
-						csvHeaders = append(csvHeaders, k)
-					}
-					sort.Strings(csvHeaders)
-					csvHeaderWritten = true
-					if stdoutCsvWriter != nil {
-						if err := stdoutCsvWriter.Write(csvHeaders); err != nil {
-							abortAll()
-							return err
-						}
-					}
-					if csvFileWriter != nil {
-						if err := csvFileWriter.Write(csvHeaders); err != nil {
-							abortAll()
-							return err
-						}
-					}
-				}
-
-				if err := writeItem(item, sep); err != nil {
-					abortAll()
-					return fmt.Errorf("error writing output: %w", err)
-				}
-				firstItem = false
-			}
-		}
-	}
-
-	// Finalize stdout JSON
-	if stdoutBuf != nil {
-		if generate > 1 {
-			if _, err := stdoutBuf.WriteString("]\n"); err != nil {
-				abortAll()
-				return err
-			}
-		}
-		if err := stdoutBuf.Flush(); err != nil {
-			abortAll()
-			return err
-		}
-	}
-
-	// Finalize stdout CSV
-	if stdoutCsvWriter != nil {
-		stdoutCsvWriter.Flush()
-		if err := stdoutCsvWriter.Error(); err != nil {
-			abortAll()
-			return err
-		}
-		if stdoutCsvBuf != nil {
-			if err := stdoutCsvBuf.Flush(); err != nil {
-				abortAll()
-				return err
-			}
-		}
-	}
-
-	// Finalize JSON file
-	if jsonFileEnc != nil {
-		if generate > 1 {
-			if _, err := jsonFileBuf.WriteString("]\n"); err != nil {
-				jsonFileAbort()
-				if csvFileAbort != nil {
-					csvFileAbort()
-				}
-				return err
-			}
-		}
-		if err := jsonFileBuf.Flush(); err != nil {
-			jsonFileAbort()
-			if csvFileAbort != nil {
-				csvFileAbort()
-			}
-			return err
-		}
-		if err := jsonFileCommit(); err != nil {
-			if csvFileAbort != nil {
-				csvFileAbort()
-			}
-			return fmt.Errorf("failed to commit JSON file: %w", err)
-		}
-	}
-
-	// Finalize CSV file
-	if csvFileWriter != nil {
-		csvFileWriter.Flush()
-		if err := csvFileWriter.Error(); err != nil {
-			csvFileAbort()
-			return err
-		}
-		if err := csvFileBuf.Flush(); err != nil {
-			csvFileAbort()
-			return err
-		}
-		if err := csvFileCommit(); err != nil {
-			return fmt.Errorf("failed to commit CSV file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// routeOutput handles all output routing for --parse-json and --parse-json-file results.
-// parseMaps is the slice of processed root objects.
-// generate is the --generate count (used to decide single-object vs array).
-// toStdout is "" | "as-json" | "as-csv".
-// toStdoutPrettify controls indented vs compact stdout output.
-// toJsonFileSet indicates --to-json-file was passed (even with empty value).
-// toJsonFileValue is the optional filename given with --to-json-file.
-// toCsvFileSet indicates --to-csv-file was passed (even with empty value).
-// toCsvFileValue is the optional filename given with --to-csv-file.
-// source is "parse-json" or "parse-json-file".
-// defaultFilePath is the full default JSON output path (used when source is "parse-json-file" and no explicit filename was given).
-// defaultCsvFilePath is the full default CSV output path (used when source is "parse-json-file" and no explicit csv filename was given).
-// out is the writer for stdout.
-func routeOutput(
-	parseMaps []map[string]any,
-	generate int,
-	toStdout string,
-	toStdoutPrettify bool,
+// resolveOutputFilePaths resolves the final JSON and CSV output file paths from flags and defaults.
+// Returns empty strings for paths whose corresponding flag was not set.
+func resolveOutputFilePaths(
+	parseJsonFileSet bool,
+	parseJsonFile string,
 	toJsonFileSet bool,
 	toJsonFileValue string,
 	toCsvFileSet bool,
 	toCsvFileValue string,
-	source string,
-	defaultFilePath string,
-	defaultCsvFilePath string,
+) (jsonPath string, csvPath string, err error) {
+	if toJsonFileSet {
+		switch {
+		// Specific filename provided with --to-json-file
+		case toJsonFileValue != "":
+			jsonPath = toJsonFileValue
+		// Default filename based on --parse-json-file template name
+		case parseJsonFileSet && parseJsonFile != "":
+			defaultFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".json", 1)
+			defaultFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultFileName)
+			jsonPath = defaultFilePath
+		// Default filename in current working directory `output.json`
+		default:
+			dir, e := workingDir()
+			if e != nil {
+				return "", "", e
+			}
+			jsonPath = filepath.Join(dir, "output.json")
+		}
+	}
+
+	if toCsvFileSet {
+		switch {
+		// Specific filename provided with --to-csv-file
+		case toCsvFileValue != "":
+			csvPath = toCsvFileValue
+		// Default filename based on --parse-json-file template name
+		case parseJsonFileSet && parseJsonFile != "":
+			defaultCsvFileName := strings.Replace(filepath.Base(parseJsonFile), ".template.json", ".csv", 1)
+			defaultCsvFilePath := filepath.Join(filepath.Dir(parseJsonFile), defaultCsvFileName)
+			csvPath = defaultCsvFilePath
+		// Default filename in current working directory `output.csv`
+		default:
+			dir, e := workingDir()
+			if e != nil {
+				return "", "", e
+			}
+			csvPath = filepath.Join(dir, "output.csv")
+		}
+	}
+
+	return jsonPath, csvPath, nil
+}
+
+// routeOutput handles all output routing for --parse-json and --parse-json-file results.
+// processedJsonArr is the slice of processed root objects.
+// generate is the --generate count (used to decide single-object vs array).
+// jsonFilePath is the resolved JSON output file path.
+// csvFilePath is the resolved CSV output file path.
+// out is the io.Writer for stdout output.
+func routeOutput(
+	processedJsonArr []map[string]any,
+	generate int,
+	jsonFilePath string,
+	csvFilePath string,
 	out io.Writer,
 ) error {
 	// Determine the data shape
 	var data any
 	if generate == 1 {
-		data = parseMaps[0]
+		data = processedJsonArr[0]
 	} else {
-		data = parseMaps
+		data = processedJsonArr
 	}
 
 	// Stdout output
-	if toStdout != "" {
-		switch toStdout {
-		case "as-json":
-			var jsonBytes []byte
-			var err error
-			if toStdoutPrettify {
-				jsonBytes, err = json.MarshalIndent(data, "", "  ")
-			} else {
-				jsonBytes, err = json.Marshal(data)
-			}
-			if err != nil {
-				return fmt.Errorf("error marshalling JSON for stdout: %w", err)
-			}
-			fmt.Fprintf(out, "%s\n", jsonBytes)
-		case "as-csv":
-			csvStr, err := marshalAsCSV(parseMaps, toStdoutPrettify)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "%s\n", csvStr)
+	if out != nil {
+		jsonBytes, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("error marshalling JSON for stdout: %w", err)
 		}
+		fmt.Fprintf(out, "%s\n", string(jsonBytes))
 	}
 
-	// File output
-	if toJsonFileSet {
-		var resolvedPath string
-		switch {
-		case toJsonFileValue != "" && toJsonFileValue != "_use_default_":
-			resolvedPath = toJsonFileValue
-		case source == "parse-json-file":
-			resolvedPath = defaultFilePath
-		default:
-			// source == "parse-json": use output.json in the current working directory
-			dir, err := workingDir()
-			if err != nil {
-				return err
-			}
-			resolvedPath = filepath.Join(dir, "output.json")
-		}
-
-		// Files are always pretty-printed for readability
-		jsonBytes, err := json.MarshalIndent(data, "", "  ")
+	// Json file output
+	if jsonFilePath != "" {
+		jsonBytes, err := json.Marshal(data)
 		if err != nil {
 			return fmt.Errorf("error marshalling JSON for file: %w", err)
 		}
 
-		f, commit, abort, err := atomicFileCreate(resolvedPath)
+		f, commit, abort, err := atomicFileCreate(jsonFilePath)
 		if err != nil {
 			return err
 		}
 		if _, err = f.Write(jsonBytes); err != nil {
 			abort()
-			return fmt.Errorf("failed to write result to '%s': %w", resolvedPath, err)
+			return fmt.Errorf("failed to write result to '%s': %w", jsonFilePath, err)
 		}
 		if err = commit(); err != nil {
-			return fmt.Errorf("failed to commit JSON file '%s': %w", resolvedPath, err)
+			return fmt.Errorf("failed to commit JSON file '%s': %w", jsonFilePath, err)
 		}
 	}
 
 	// CSV file output
-	if toCsvFileSet {
-		var resolvedCsvPath string
-		switch {
-		case toCsvFileValue != "" && toCsvFileValue != "_use_default_":
-			resolvedCsvPath = toCsvFileValue
-		case source == "parse-json-file":
-			resolvedCsvPath = defaultCsvFilePath
-		default:
-			// source == "parse-json": use output.csv in the current working directory
-			dir, err := workingDir()
-			if err != nil {
-				return err
-			}
-			resolvedCsvPath = filepath.Join(dir, "output.csv")
-		}
-
-		// CSV files are written in standard (non-prettified) format
-		csvStr, err := marshalAsCSV(parseMaps, false)
+	if csvFilePath != "" {
+		f, commit, abort, err := atomicFileCreate(csvFilePath)
 		if err != nil {
 			return err
 		}
-
-		f, commit, abort, err := atomicFileCreate(resolvedCsvPath)
+		csvStr, err := marshalAsCSV(processedJsonArr)
 		if err != nil {
 			return err
 		}
 		if _, err = f.Write([]byte(csvStr + "\n")); err != nil {
 			abort()
-			return fmt.Errorf("failed to write CSV result to '%s': %w", resolvedCsvPath, err)
+			return fmt.Errorf("failed to write CSV result to '%s': %w", csvFilePath, err)
 		}
 		if err = commit(); err != nil {
-			return fmt.Errorf("failed to commit CSV file '%s': %w", resolvedCsvPath, err)
+			return fmt.Errorf("failed to commit CSV file '%s': %w", csvFilePath, err)
+		}
+	}
+	return nil
+}
+
+// startDebugRoutine launches a goroutine that prints live progress to out (always
+// os.Stderr in production) at 200ms intervals. Call the returned stop function to
+// terminate the display and print a final newline.
+func startDebugRoutine(ctx context.Context, stats *DebugStats, out io.Writer) (stop func()) {
+	innerCtx, cancel := context.WithCancel(ctx)
+
+	done := make(chan struct{})
+	render := func(final bool) {
+		elapsed := time.Since(stats.StartTime).Seconds()
+		gen := stats.Generated.Load()
+		bytesWrittenToJson := stats.BytesWrittenToJson.Load()
+		bytesWrittenToCsv := stats.BytesWrittenToCsv.Load()
+		percentDone := 0.0
+		if stats.TotalWeight > 0 {
+			percentDone = float64(gen) / float64(stats.TotalWeight) * 100
+		}
+		estMemPeakStr := formatSizeMetrics(stats.EstMemPeakBytes)
+
+		// Create the debug output string with all relevant stats, '\r' at the start to overwrite the previous line, making it look like a live-updating single line of output
+		strOutput := fmt.Sprintf("\r[debug] Workers: %d/%d | PeakMem: ~%s | Progress: %s / %s (%.1f%%) | Elapsed: %s",
+			stats.CoresUsed, stats.CoresAvailable, estMemPeakStr, formatNumberMetrics(gen), formatNumberMetrics(stats.TotalWeight), percentDone, formatDurationMetrics(elapsed))
+
+		if bytesWrittenToJson > 0 {
+			strOutput += fmt.Sprintf(" | JSON File: ~%s", formatSizeMetrics(bytesWrittenToJson))
+		}
+		if bytesWrittenToCsv > 0 {
+			strOutput += fmt.Sprintf(" | CSV File: ~%s", formatSizeMetrics(bytesWrittenToCsv))
+		}
+		fmt.Fprint(out, strOutput)
+
+		if final {
+			fmt.Fprintln(out)
 		}
 	}
 
-	return nil
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				render(false)
+			case <-innerCtx.Done():
+				render(true)
+				return
+			}
+		}
+	}()
+
+	return func() {
+		cancel()
+		<-done
+	}
 }

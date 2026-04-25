@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/lfsc09/k-test-n-stress/mocker"
-	"github.com/mohae/deepcopy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -19,7 +18,7 @@ func TestMockCmdUnitSuite(t *testing.T) {
 	suite.Run(t, new(MockCmdTestSuite))
 }
 
-func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
+func (suite *MockCmdTestSuite) TestParseMockFunction_ValidInputs() {
 	tests := []struct {
 		testName         string
 		input            string
@@ -131,14 +130,14 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
 	}
 
 	for _, tt := range tests {
-		funcName, params, err := extractMockMethod(tt.input)
+		funcName, params, err := parseMockFunction(tt.input)
 		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
 		assert.Equal(suite.T(), tt.expectedFuncName, funcName, "Test case '%s' failed", tt.testName)
 		assert.Equal(suite.T(), tt.expectedParams, params, "Test case '%s' failed", tt.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestExtractMockMethod_BareValueRejection() {
+func (suite *MockCmdTestSuite) TestParseMockFunction_BareValueRejection() {
 	tests := []struct {
 		testName string
 		input    string
@@ -166,7 +165,7 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_BareValueRejection() {
 	}
 
 	for _, tt := range tests {
-		funcName, params, err := extractMockMethod(tt.input)
+		funcName, params, err := parseMockFunction(tt.input)
 		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 		assert.Contains(suite.T(), err.Error(), "must be wrapped in", "Test case '%s' failed", tt.testName)
 		assert.Empty(suite.T(), funcName, "Test case '%s' failed", tt.testName)
@@ -174,7 +173,7 @@ func (suite *MockCmdTestSuite) TestExtractMockMethod_BareValueRejection() {
 	}
 }
 
-func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
+func (suite *MockCmdTestSuite) TestParseDynamicValue_ValidInputs() {
 	tests := []struct {
 		testName       string
 		input          string
@@ -238,13 +237,13 @@ func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
 	}
 
 	for _, tt := range tests {
-		value, isMock := interpretString(tt.input)
+		value, isMock := parseDynamicValue(tt.input)
 		assert.Equal(suite.T(), tt.expectedValue, value, "Test case '%s' failed", tt.testName)
 		assert.Equal(suite.T(), tt.expectedIsMock, isMock, "Test case '%s' failed", tt.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
+func (suite *MockCmdTestSuite) TestProcessMFJson_ValidInputs() {
 	tests := []struct {
 		testName string
 		input    map[string]any
@@ -375,12 +374,12 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
 
 	for _, tt := range tests {
 		mockerObj := mocker.New()
-		err := processJsonMap(tt.input, mockerObj)
+		err := processMFJson(tt.input, mockerObj, nil)
 		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
+func (suite *MockCmdTestSuite) TestProcessMFJson_InvalidInputs() {
 	tests := []struct {
 		testName string
 		input    map[string]any
@@ -401,7 +400,7 @@ func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
 
 	for _, tt := range tests {
 		mockerObj := mocker.New()
-		err := processJsonMap(tt.input, mockerObj)
+		err := processMFJson(tt.input, mockerObj, nil)
 		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
@@ -552,251 +551,6 @@ func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
 	}
 }
 
-func (suite *MockCmdTestSuite) TestAnalyzeTemplate() {
-	tests := []struct {
-		testName      string
-		parseMap      map[string]any
-		generate      int
-		numWorkers    int
-		wantSeq       bool
-		wantCount     int
-		wantDepth     int
-		wantMinWeight int64 // TotalWeight must be >= this value when wantSeq==false
-	}{
-		{
-			testName:      "flat template generate=1 is sequential",
-			parseMap:      map[string]any{"name": "{{ Person.name }}"},
-			generate:      1,
-			numWorkers:    8,
-			wantSeq:       true,
-			wantCount:     1,
-			wantDepth:     0,
-			wantMinWeight: 1,
-		},
-		{
-			testName:      "flat template generate=50000 is concurrent",
-			parseMap:      map[string]any{"name": "{{ Person.name }}"},
-			generate:      50000,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     50000,
-			wantDepth:     0,
-			wantMinWeight: 50000,
-		},
-		{
-			// With generate==1 and count >= numWorkers, analyzeTemplate now returns an
-			// inner split (Depth=1) rather than falling back to root.
-			testName: "inner bracket key n=100000 with generate=1 uses inner split",
-			parseMap: map[string]any{
-				"employees[100000]": map[string]any{"name": "{{ Person.name }}"},
-			},
-			generate:      1,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     100000, // inner split count = splitNode.count
-			wantDepth:     1,
-			wantMinWeight: 100000,
-		},
-		{
-			// generate > 1 with inner [n] keys falls back to root split.
-			testName: "inner bracket key n=100000 with generate=2 falls back to root split",
-			parseMap: map[string]any{
-				"employees[100000]": map[string]any{"name": "{{ Person.name }}"},
-			},
-			generate:      2,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     2, // root split count = generate
-			wantDepth:     0,
-			wantMinWeight: 100000, // innerWeight includes the [n] key
-		},
-		{
-			// generate==1: outer[20000] at depth 1 is the split node; inner[5000] at depth 2
-			// contributes to innerWeight.
-			testName: "nested n keys at different depths — inner split at shallowest with generate=1",
-			parseMap: map[string]any{
-				"outer[20000]": map[string]any{
-					"inner[5000]": map[string]any{"name": "{{ Person.name }}"},
-				},
-			},
-			generate:      1,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     20000, // inner split count = splitNode.count
-			wantDepth:     1,
-			wantMinWeight: 20000 * 5000, // Count * InnerWeight
-		},
-		{
-			// generate > 1 with nested [n] keys falls back to root split.
-			testName: "nested n keys at different depths — falls back to root with generate=2",
-			parseMap: map[string]any{
-				"outer[20000]": map[string]any{
-					"inner[5000]": map[string]any{"name": "{{ Person.name }}"},
-				},
-			},
-			generate:      2,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     2,
-			wantDepth:     0,
-			wantMinWeight: 20000 * 5000, // product of both
-		},
-		{
-			// generate==1 with two siblings at depth 1: both qualifying siblings are
-			// collected; Count is the sum of all sibling counts.
-			testName: "sibling n keys at same depth with generate=1 uses inner split on first",
-			parseMap: map[string]any{
-				"truck[10000]": map[string]any{"model": "{{ Car.model }}"},
-				"car[10000]":   map[string]any{"model": "{{ Car.model }}"},
-			},
-			generate:      1,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     20000, // Count = sum of all sibling counts (10000 + 10000)
-			wantDepth:     1,
-			wantMinWeight: 20000, // TotalWeight = 1 * 20000 * 1
-		},
-		{
-			testName: "all n nodes below numWorkers threshold — sequential via totalWeight",
-			parseMap: map[string]any{
-				"company[3]": map[string]any{"name": "{{ Company.name }}"},
-			},
-			generate:      1,
-			numWorkers:    8,
-			wantSeq:       true,
-			wantCount:     1,
-			wantDepth:     0,
-			wantMinWeight: 1,
-		},
-		{
-			testName:      "totalWeight just below threshold (9999) is sequential",
-			parseMap:      map[string]any{"name": "{{ Person.name }}"},
-			generate:      9999,
-			numWorkers:    8,
-			wantSeq:       true,
-			wantCount:     9999,
-			wantDepth:     0,
-			wantMinWeight: 9999,
-		},
-		{
-			testName:      "totalWeight at threshold (10000) is concurrent",
-			parseMap:      map[string]any{"name": "{{ Person.name }}"},
-			generate:      10000,
-			numWorkers:    8,
-			wantSeq:       false,
-			wantCount:     10000,
-			wantDepth:     0,
-			wantMinWeight: 10000,
-		},
-	}
-
-	for _, tt := range tests {
-		sp := analyzeTemplate(tt.parseMap, tt.generate, tt.numWorkers)
-		assert.Equal(suite.T(), tt.wantSeq, sp.UseSequential, "Test case '%s': UseSequential", tt.testName)
-		assert.Equal(suite.T(), tt.wantCount, sp.Count, "Test case '%s': Count", tt.testName)
-		assert.Equal(suite.T(), tt.wantDepth, sp.Depth, "Test case '%s': Depth", tt.testName)
-		if !tt.wantSeq {
-			assert.GreaterOrEqual(suite.T(), sp.TotalWeight, tt.wantMinWeight, "Test case '%s': TotalWeight", tt.testName)
-		}
-	}
-}
-
-func (suite *MockCmdTestSuite) TestAnalyzeTemplate_InnerSplit() {
-	tests := []struct {
-		testName        string
-		parseMap        map[string]any
-		generate        int
-		numWorkers      int
-		wantDepth       int
-		wantCount       int
-		wantInnerWeight int64
-		wantTotalWeight int64
-		wantSeq         bool
-	}{
-		{
-			// employees[20] at depth 1, count >= numWorkers=4, no nested [n] keys.
-			testName: "one inner [n] key at depth 1 above numWorkers",
-			parseMap: map[string]any{
-				"employees[20]": map[string]any{"name": "{{ Person.name }}"},
-			},
-			generate:        1,
-			numWorkers:      4,
-			wantDepth:       1,
-			wantCount:       20,
-			wantInnerWeight: 1,
-			wantTotalWeight: 20,   // 1 * 20 * 1
-			wantSeq:         true, // 20 < 10000
-		},
-		{
-			// employees[20] at depth 1 with nested phones[5] at depth 2.
-			testName: "inner [n] at depth 1 with nested [n] at depth 2",
-			parseMap: map[string]any{
-				"employees[20]": map[string]any{
-					"phones[5]": "{{ Person.phoneNumber }}",
-				},
-			},
-			generate:        1,
-			numWorkers:      4,
-			wantDepth:       1,
-			wantCount:       20,
-			wantInnerWeight: 5,
-			wantTotalWeight: 100,  // 1 * 20 * 5
-			wantSeq:         true, // 100 < 10000
-		},
-		{
-			// company[2] at depth 1, count < numWorkers=8 → splitDepth==-1 → root split.
-			testName: "root [n] key count below numWorkers falls back to root split",
-			parseMap: map[string]any{
-				"company[2]": map[string]any{"name": "{{ Company.name }}"},
-			},
-			generate:        1,
-			numWorkers:      8,
-			wantDepth:       0,
-			wantCount:       1,
-			wantInnerWeight: 2,
-			wantTotalWeight: 2, // 1 * 1 * 2 (root split innerWeight product = 2)
-			wantSeq:         true,
-		},
-		{
-			// No [n] keys at all → root split, generate=1.
-			testName: "no [n] keys uses root split",
-			parseMap: map[string]any{
-				"name": "{{ Person.name }}",
-			},
-			generate:        1,
-			numWorkers:      8,
-			wantDepth:       0,
-			wantCount:       1,
-			wantInnerWeight: 1,
-			wantTotalWeight: 1,
-			wantSeq:         true,
-		},
-		{
-			// large inner array: employees[20000] → totalWeight = 20000 >= 10000.
-			testName: "inner split is concurrent when totalWeight at threshold",
-			parseMap: map[string]any{
-				"employees[20000]": map[string]any{"name": "{{ Person.name }}"},
-			},
-			generate:        1,
-			numWorkers:      4,
-			wantDepth:       1,
-			wantCount:       20000,
-			wantInnerWeight: 1,
-			wantTotalWeight: 20000,
-			wantSeq:         false,
-		},
-	}
-
-	for _, tt := range tests {
-		sp := analyzeTemplate(tt.parseMap, tt.generate, tt.numWorkers)
-		assert.Equal(suite.T(), tt.wantDepth, sp.Depth, "Test case '%s': Depth", tt.testName)
-		assert.Equal(suite.T(), tt.wantCount, sp.Count, "Test case '%s': Count", tt.testName)
-		assert.Equal(suite.T(), tt.wantInnerWeight, sp.InnerWeight, "Test case '%s': InnerWeight", tt.testName)
-		assert.Equal(suite.T(), tt.wantTotalWeight, sp.TotalWeight, "Test case '%s': TotalWeight", tt.testName)
-		assert.Equal(suite.T(), tt.wantSeq, sp.UseSequential, "Test case '%s': UseSequential", tt.testName)
-	}
-}
-
 func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 	tests := []struct {
 		testName          string
@@ -846,65 +600,130 @@ func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
 	}
 }
 
-func (suite *MockCmdTestSuite) TestResolveOutputPaths() {
+func (suite *MockCmdTestSuite) TestResolveOutputFilePaths() {
 	tests := []struct {
-		testName         string
-		toJsonFileSet    bool
-		toJsonFileValue  string
-		toCsvFileSet     bool
-		toCsvFileValue   string
-		source           string
-		defaultFilePath  string
-		defaultCsvPath   string
-		wantJsonNotEmpty bool
-		wantCsvNotEmpty  bool
-		wantError        bool
+		testName          string
+		parseJsonFileSet  bool
+		parseJsonFile     string
+		toJsonFileSet     bool
+		toJsonFileValue   string
+		toCsvFileSet      bool
+		toCsvFileValue    string
+		wantJsonNotEmpty  bool
+		wantJsonToContain string
+		wantCsvNotEmpty   bool
+		wantCsvToContain  string
+		wantError         bool
 	}{
 		{
-			testName:         "neither flag set returns empty paths",
-			toJsonFileSet:    false,
-			toCsvFileSet:     false,
-			source:           "parse-json",
-			wantJsonNotEmpty: false,
-			wantCsvNotEmpty:  false,
+			testName:          "neither flag set returns empty paths",
+			parseJsonFileSet:  false,
+			toJsonFileSet:     false,
+			toCsvFileSet:      false,
+			wantJsonNotEmpty:  false,
+			wantJsonToContain: "",
+			wantCsvNotEmpty:   false,
+			wantCsvToContain:  "",
 		},
 		{
-			testName:         "explicit JSON path",
-			toJsonFileSet:    true,
-			toJsonFileValue:  "mydata.json",
-			toCsvFileSet:     false,
-			source:           "parse-json",
-			wantJsonNotEmpty: true,
-			wantCsvNotEmpty:  false,
+			testName:          "--parse-json with --to-json-file without output filename",
+			parseJsonFileSet:  false,
+			toJsonFileSet:     true,
+			toJsonFileValue:   "",
+			toCsvFileSet:      false,
+			wantJsonNotEmpty:  true,
+			wantJsonToContain: "output.json",
+			wantCsvNotEmpty:   false,
+			wantCsvToContain:  "",
 		},
 		{
-			testName:         "explicit CSV path",
-			toJsonFileSet:    false,
-			toCsvFileSet:     true,
-			toCsvFileValue:   "mydata.csv",
-			source:           "parse-json",
-			wantJsonNotEmpty: false,
-			wantCsvNotEmpty:  true,
+			testName:          "--parse-json with --to-json-file with output filename",
+			parseJsonFileSet:  false,
+			toJsonFileSet:     true,
+			toJsonFileValue:   "mydata.json",
+			toCsvFileSet:      false,
+			wantJsonNotEmpty:  true,
+			wantJsonToContain: "mydata.json",
+			wantCsvNotEmpty:   false,
+			wantCsvToContain:  "",
 		},
 		{
-			testName:         "parse-json-file source uses defaults",
-			toJsonFileSet:    true,
-			toJsonFileValue:  "_use_default_",
-			toCsvFileSet:     true,
-			toCsvFileValue:   "_use_default_",
-			source:           "parse-json-file",
-			defaultFilePath:  "/tmp/output.json",
-			defaultCsvPath:   "/tmp/output.csv",
-			wantJsonNotEmpty: true,
-			wantCsvNotEmpty:  true,
+			testName:          "--parse-json-file with --to-json-file without output filename",
+			parseJsonFileSet:  true,
+			parseJsonFile:     "input.template.json",
+			toJsonFileSet:     true,
+			toJsonFileValue:   "",
+			toCsvFileSet:      false,
+			wantJsonNotEmpty:  true,
+			wantJsonToContain: "input.json",
+			wantCsvNotEmpty:   false,
+			wantCsvToContain:  "",
+		},
+		{
+			testName:          "--parse-json-file with --to-json-file with output filename",
+			parseJsonFileSet:  true,
+			parseJsonFile:     "input.template.json",
+			toJsonFileSet:     true,
+			toJsonFileValue:   "mydata.json",
+			toCsvFileSet:      false,
+			wantJsonNotEmpty:  true,
+			wantJsonToContain: "mydata.json",
+			wantCsvNotEmpty:   false,
+			wantCsvToContain:  "",
+		},
+		{
+			testName:          "--parse-json with --to-csv-file without output filename",
+			parseJsonFileSet:  false,
+			toJsonFileSet:     false,
+			toCsvFileSet:      true,
+			toCsvFileValue:    "",
+			wantJsonNotEmpty:  false,
+			wantJsonToContain: "",
+			wantCsvNotEmpty:   true,
+			wantCsvToContain:  "output.csv",
+		},
+		{
+			testName:          "--parse-json with --to-csv-file with output filename",
+			parseJsonFileSet:  false,
+			toJsonFileSet:     false,
+			toCsvFileSet:      true,
+			toCsvFileValue:    "mydata.csv",
+			wantJsonNotEmpty:  false,
+			wantJsonToContain: "",
+			wantCsvNotEmpty:   true,
+			wantCsvToContain:  "mydata.csv",
+		},
+		{
+			testName:          "--parse-json-file with --to-csv-file without output filename",
+			parseJsonFileSet:  true,
+			parseJsonFile:     "input.template.json",
+			toJsonFileSet:     false,
+			toCsvFileSet:      true,
+			toCsvFileValue:    "",
+			wantJsonNotEmpty:  false,
+			wantJsonToContain: "",
+			wantCsvNotEmpty:   true,
+			wantCsvToContain:  "input.csv",
+		},
+		{
+			testName:          "--parse-json-file with --to-csv-file with output filename",
+			parseJsonFileSet:  true,
+			parseJsonFile:     "input.template.json",
+			toJsonFileSet:     false,
+			toCsvFileSet:      true,
+			toCsvFileValue:    "mydata.csv",
+			wantJsonNotEmpty:  false,
+			wantJsonToContain: "",
+			wantCsvNotEmpty:   true,
+			wantCsvToContain:  "mydata.csv",
 		},
 	}
 
 	for _, tt := range tests {
-		jsonPath, csvPath, err := resolveOutputPaths(
+		jsonPath, csvPath, err := resolveOutputFilePaths(
 			tt.toJsonFileSet, tt.toJsonFileValue,
 			tt.toCsvFileSet, tt.toCsvFileValue,
-			tt.source, tt.defaultFilePath, tt.defaultCsvPath,
+			tt.parseJsonFileSet, tt.parseJsonFile,
 		)
 		if tt.wantError {
 			assert.Error(suite.T(), err, "Test case '%s'", tt.testName)
@@ -913,54 +732,20 @@ func (suite *MockCmdTestSuite) TestResolveOutputPaths() {
 		}
 		if tt.wantJsonNotEmpty {
 			assert.NotEmpty(suite.T(), jsonPath, "Test case '%s': jsonPath", tt.testName)
+			assert.Contains(suite.T(), jsonPath, tt.wantJsonToContain, "Test case '%s': jsonPath should contain expected substring", tt.testName)
 		} else {
 			assert.Empty(suite.T(), jsonPath, "Test case '%s': jsonPath", tt.testName)
 		}
 		if tt.wantCsvNotEmpty {
 			assert.NotEmpty(suite.T(), csvPath, "Test case '%s': csvPath", tt.testName)
+			assert.Contains(suite.T(), csvPath, tt.wantCsvToContain, "Test case '%s': csvPath should contain expected substring", tt.testName)
 		} else {
 			assert.Empty(suite.T(), csvPath, "Test case '%s': csvPath", tt.testName)
 		}
 	}
 }
 
-func (suite *MockCmdTestSuite) TestExtractCsvHeaders() {
-	tests := []struct {
-		testName string
-		template map[string]any
-		want     []string
-	}{
-		{
-			testName: "flat template returns sorted keys",
-			template: map[string]any{
-				"name":  "{{ Person.name }}",
-				"email": "{{ Internet.email }}",
-				"age":   "{{ Number.number }}",
-			},
-			want: []string{"age", "email", "name"},
-		},
-		{
-			testName: "key with bracket notation is sanitized",
-			template: map[string]any{
-				"phones[3]": "{{ Person.phoneNumber }}",
-				"name":      "{{ Person.name }}",
-			},
-			want: []string{"name", "phones"},
-		},
-		{
-			testName: "single key",
-			template: map[string]any{"z": "val"},
-			want:     []string{"z"},
-		},
-	}
-
-	for _, tt := range tests {
-		headers := extractCsvHeaders(tt.template)
-		assert.Equal(suite.T(), tt.want, headers, "Test case '%s'", tt.testName)
-	}
-}
-
-func (suite *MockCmdTestSuite) TestSanitizeJsonMap_ArrayRecursion() {
+func (suite *MockCmdTestSuite) TestSanitizeGeneratedJson_ArrayRecursion() {
 	tests := []struct {
 		testName string
 		input    map[string]any
@@ -986,7 +771,7 @@ func (suite *MockCmdTestSuite) TestSanitizeJsonMap_ArrayRecursion() {
 	}
 
 	for _, tt := range tests {
-		sanitizeJsonMap(tt.input)
+		sanitizeGeneratedJson(tt.input)
 		for _, wantKey := range tt.wantKeys {
 			_, ok := tt.input[wantKey]
 			assert.True(suite.T(), ok, "Test case '%s': expected key '%s' after sanitization", tt.testName, wantKey)
@@ -1045,39 +830,4 @@ func (suite *MockCmdTestSuite) TestAtomicFileCreate_AbortCleansUp() {
 	// Final file must NOT exist
 	_, err = os.Stat(finalPath)
 	assert.True(suite.T(), os.IsNotExist(err), "final file must not exist after abort")
-}
-
-// BenchmarkDeepCopyTemplate measures the reflection cost of deepcopy.Copy for a
-// representative nested template. Run with:
-//
-//	go test -bench=BenchmarkDeepCopyTemplate -benchmem ./cmd/
-//
-// If ns/op is high (>5000 per iteration), consider a hand-rolled clone.
-// TODO(deepcopy-hand-rolled): replace deepcopy.Copy with a type-aware clone for
-// map[string]any templates — see concurrency-brainstorm.md for the trade-offs.
-func BenchmarkDeepCopyTemplate(b *testing.B) {
-	template := map[string]any{
-		"field1":  "{{ Person.name }}",
-		"field2":  "{{ Internet.email }}",
-		"field3":  "{{ UUID.uuidv4 }}",
-		"field4":  "{{ Address.city }}",
-		"field5":  "{{ Company.name }}",
-		"field6":  "{{ Number.number::{0}:{1}:{100} }}",
-		"field7":  "{{ Boolean.boolean }}",
-		"field8":  "{{ Date.date }}",
-		"field9":  "{{ Car.model }}",
-		"field10": "{{ Lorem.word }}",
-		"nested": map[string]any{
-			"sub1": "{{ Person.firstName }}",
-			"sub2": "{{ Person.lastName }}",
-			"sub3": "{{ Internet.url }}",
-			"sub4": "{{ UUID.uuidv4 }}",
-			"sub5": "{{ Address.postCode }}",
-		},
-	}
-
-	b.ResetTimer()
-	for range b.N {
-		_ = deepcopy.Copy(template).(map[string]any)
-	}
 }

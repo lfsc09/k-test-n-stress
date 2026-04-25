@@ -45,48 +45,9 @@ func New() *Mock {
 	}
 }
 
-// tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
-func tableLineDivider(colSizes []int) string {
-	var line strings.Builder
-	for idx, size := range colSizes {
-		if idx == 0 {
-			line.WriteString(strings.Repeat("-", size))
-		} else {
-			line.WriteString("+" + strings.Repeat("-", size))
-		}
-	}
-	return line.String()
-}
-
-// tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
-func tableLineHeader(colSizes []int) string {
-	var line strings.Builder
-	for idx, size := range colSizes {
-		if idx == 0 {
-			fmt.Fprintf(&line, "%-*s", size, "FUNCTION")
-		} else {
-			fmt.Fprintf(&line, "| %-*s", size, "DESCRIPTION")
-		}
-	}
-	return line.String()
-}
-
-// tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
-func tableLineData(colSizes []int, data []string) string {
-	var line strings.Builder
-	for idx, size := range colSizes {
-		if idx == 0 {
-			fmt.Fprintf(&line, "%-*s", size, data[idx])
-		} else {
-			fmt.Fprintf(&line, "| %-*s", size, data[idx])
-		}
-	}
-	return line.String()
-}
-
-// List writes a formatted list of available mock functions and their descriptions to the provided io.Writer. Each function is displayed in a tabular format with its name and description.
+// CobraList writes a formatted list of available mock functions and their descriptions to the provided io.Writer. Each function is displayed in a tabular format with its name and description.
 // e.g.: fmt.Fprintf(out, "%-40s | %s\n", "Address.latitude", "Generates a random latitude")
-func (m *Mock) List(out io.Writer) {
+func (m *Mock) CobraList(out io.Writer) {
 	colSizes := []int{40, 60}
 	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
 	fmt.Fprintf(out, "%s\n", tableLineHeader(colSizes))
@@ -565,4 +526,43 @@ func (m *Mock) Generate(mockFunction string, functionParams []string) (string, e
 	default:
 		return "", fmt.Errorf("unknown mock function '%s'", mockFunction)
 	}
+}
+
+// tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
+func tableLineDivider(colSizes []int) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			line.WriteString(strings.Repeat("-", size))
+		} else {
+			line.WriteString("+" + strings.Repeat("-", size))
+		}
+	}
+	return line.String()
+}
+
+// tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
+func tableLineHeader(colSizes []int) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			fmt.Fprintf(&line, "%-*s", size, "FUNCTION")
+		} else {
+			fmt.Fprintf(&line, "| %-*s", size, "DESCRIPTION")
+		}
+	}
+	return line.String()
+}
+
+// tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
+func tableLineData(colSizes []int, data []string) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			fmt.Fprintf(&line, "%-*s", size, data[idx])
+		} else {
+			fmt.Fprintf(&line, "| %-*s", size, data[idx])
+		}
+	}
+	return line.String()
 }

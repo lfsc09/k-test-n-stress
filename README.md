@@ -53,14 +53,15 @@ ktns mock --parse-str 'Name: Person.name'
 
 - `--list`: To list all available mock functions.
 - `--parse-str`: Pass a literal string to be parsed. The mock data will be generated based on the provided string.
-- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object. Requires `--to-stdout` or `--to-json-file`.
-- `--parse-json-file`: Pass a path to a single `.template.json` file (the filename **must** end with `.template.json`). The mock data will be generated based on this file. Requires `--to-stdout` or `--to-json-file`.
+- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
+- `--parse-json-file`: Pass a path to a single `.template.json` file (the filename **must** end with `.template.json`). The mock data will be generated based on this file.
 - `--generate`: Pass the desired amount of root objects that will be generated (available for `--parse-json` and `--parse-json-file`). (More info [here](#generating-multiple-values))
-- `--to-stdout <as-json|as-csv>`: Output the result to stdout as a JSON object/array or as a CSV table. Must be used with `--parse-json` or `--parse-json-file`. Use `--to-stdout-prettify` to format for readability. Note: CSV output works best with flat (one-level-deep) JSON objects; nested objects and arrays are serialised using their Go string representation.
-- `--to-stdout-prettify`: Prettify the stdout output (indented JSON or padded-column CSV). Only valid with `--to-stdout`.
-- `--to-json-file [filename]`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` in the current working directory (for `--parse-json`) or to the template name without `.template` in the same directory as the template (for `--parse-json-file`). When specifying an explicit filename, the `=` syntax is required: `--to-json-file=myfile.json`. Can be combined with `--to-stdout`.
-- `--to-csv-file [filename]`: Write the result as CSV to a file. Same filename-resolution rules as `--to-json-file` (default `output.csv` in the current working directory for `--parse-json`, template name for `--parse-json-file`). When specifying an explicit filename, the `=` syntax is required: `--to-csv-file=myfile.csv`. Can be combined with `--to-stdout` and `--to-json-file`. Note: CSV output works best with flat (one-level-deep) JSON objects.
-- `--debug`: Print a live generation-progress line to stderr during large runs (workers, memory estimate, throughput, elapsed time). Writes to stderr only — stdout/file output is unaffected. Opt-in; default `false`.
+- `--to-json-stdout`: Write the result as JSON to STDOUT.
+- `--to-json-file <filename|"">`: Write the result as JSON to a file. If no filename is given, defaults to `output.json` in the current working directory (for `--parse-json`) or to the template name without `.template` in the same directory as the template (for `--parse-json-file`).
+- `--to-csv-file <filename|"">`: Write the result as CSV to a file. Same filename-resolution rules as `--to-json-file` (default `output.csv` in the current working directory for `--parse-json`, template name for `--parse-json-file`). Note: CSV output works best with flat (one-level-deep) JSON objects.
+- `--debug`: Print a live generation-progress line to stderr during large runs (workers, memory estimate, throughput, elapsed time). Writes to stderr only, stdout/file output is unaffected.
+
+**Either `--to-json-stdout` or `--to-json-file` or `--to-csv-file` must be provided if `--parse-json` or `--parse-json-file` are used.** Multiple of these flags can be used.
 
 ### Examples
 
@@ -82,54 +83,60 @@ ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number
 
 #### `--parse-json`
 
-Output to stdout as compact JSON:
+Output examples:
+
+To **STDOUT**
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-stdout as-json
-
-# {"company":"Delvalle","employee":{"name":"Josh Smith"}}
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-json-stdout
 ```
 
-Output to stdout as prettified JSON:
-
-```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-stdout as-json --to-stdout-prettify
-
-# {
-#   "company": "Delvalle"
-# }
+```json
+{
+  "company": "Delvalle",
+  "employee": {
+    "name": "Josh Smith"
+  }
+}
 ```
 
-Output to stdout as CSV:
+To **JSON file**
 
 ```bash
-ktns mock --parse-json '{ "name": "{{ Person.name }}", "age": "{{ Number.number::{18}:{80} }}" }' --to-stdout as-csv
-
-# age,name
-# 34,Josh Smith
+ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-json-file ''
 ```
 
-Write to a file (default name `output.json` in the current working directory):
-
-```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file
+```json
+// output.json
+{
+  "company": "Delvalle",
+  "employee": {
+    "name": "Josh Smith"
+  }
+}
 ```
 
-Write to a specific file:
+> If no output filename was given the tool will use `output.json` in the current working directory.
+
+To a specific **JSON file**
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file=mydata.json
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-json-file path/to/mydata.json
 ```
 
-Both stdout and file simultaneously:
-
-```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-stdout as-json --to-json-file=mydata.json
+```json
+// path/to/mydata.json
+{
+  "company": "Delvalle",
+  "employee": {
+    "name": "Josh Smith"
+  }
+}
 ```
 
 #### `--parse-json-file`
 
-The template file **must** end with `.template.json`.
+> The template file **must** end as `.template.json`.
 
 ```json
 // employee.template.json
@@ -142,14 +149,15 @@ The template file **must** end with `.template.json`.
 }
 ```
 
-Write the default output file alongside the template (`employee.json`):
+Output examples:
+
+To **STDOUT**
 
 ```bash
-ktns mock --parse-json-file employee.template.json --to-json-file
+ktns mock --parse-json-file employee.template.json --to-json-stdout
 ```
 
 ```json
-// employee.json  (written alongside the template file)
 {
   "company": "Delvalle",
   "employee": {
@@ -159,26 +167,49 @@ ktns mock --parse-json-file employee.template.json --to-json-file
 }
 ```
 
-Write to a specific file:
+To **JSON file**
 
 ```bash
-ktns mock --parse-json-file employee.template.json --to-json-file=myout.json
-```
-
-Output to stdout as CSV:
-
-```bash
-ktns mock --parse-json-file employee.template.json --to-stdout as-csv
-```
-
-With `--generate` to produce an array:
-
-```bash
-ktns mock --parse-json-file employee.template.json --generate 3 --to-json-file
+ktns mock --parse-json-file employee.template.json --to-json-file ''
 ```
 
 ```json
-// employee.json
+// employee.json  (created alongside the template file)
+{
+  "company": "Delvalle",
+  "employee": {
+    "name": "Josh Smith",
+    "age": "39"
+  }
+}
+```
+
+> If no output filename was given the tool will use the template filename (`employee.json`) in the same directory.
+
+To a specific **JSON file**
+
+```bash
+ktns mock --parse-json-file employee.template.json --to-json-file path/to/myout.json
+```
+
+```json
+// path/to/myout.json
+{
+  "company": "Delvalle",
+  "employee": {
+    "name": "Josh Smith",
+    "age": "39"
+  }
+}
+```
+
+#### `--generate`
+
+```bash
+ktns mock --parse-json-file employee.template.json --generate 3 --to-json-stdout
+```
+
+```json
 [
   { "company": "Delvalle", "employee": { "name": "Josh Smith", "age": "39" } },
   { "company": "Infomatics", "employee": { "name": "Jane Doe", "age": "39" } },
@@ -217,20 +248,19 @@ When working with multiple parameters, you may leave them blank if not used. _(T
 Use the flag `--generate <number>` with `--parse-json` or `--parse-json-file` to generate multiple root objects.
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 10 --to-stdout as-json
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 5 --to-json-file ''
+```
 
-# This will generate
+Writes `output.json` with an array of 5 objects.
+
+```json
 [
   { "company": "Delvale" },
   { "company": "Infomatics" },
   { "company": "Braindance" },
-  ...
+  { "company": "Colleative" },
+  { "company": "Jimbo" },
 ]
-```
-
-```bash
-ktns mock --parse-json-file employees.template.json --generate 5 --to-json-file
-# Writes employees.json with an array of 5 objects in the same directory as the template file.
 ```
 
 ##### Inner objects
@@ -296,16 +326,7 @@ The `value` of a json object key may be:
 
 ```json
 {
-  "names": ["Some name 1", "{{ Person.name }}"]
-}
-
-// Or
-
-{
-  "employees": [
-    { ... },
-    { ... }
-  ]
+  "names": ["Some name 1", "{{ Person.name }}", { ... }]
 }
 ```
 
@@ -498,7 +519,6 @@ Blank entries (`""`) mean "use default", enabling positional omission (e.g. `Num
 
 - `Person.cpf` and `Company.cnpj`: Generate random digit sequences using the instance's own `*rand.Rand` and compute two mathematically valid checksum digits via the modulo-11 algorithm (`calculateChecksum` in `helpers.go`).
 - `Regex.regex`: Accepts a regex pattern wrapped in `/…/`, strips the delimiters (and unescapes `\/` → `/`), then uses `RandexpGenerator` (defined in `mocker/randexp.go`) with the instance's `*rand.Rand` to produce a matching random string.
-- `Payment.creditCardCvv`: Uses a `RandexpGenerator` (created at `mocker.New()` time, stored on the instance) driven by the instance's `*rand.Rand` to produce a 3-digit string — no global random source is touched.
 
 ##### Adding a New Mock Function
 
@@ -538,7 +558,7 @@ go build -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=x.y.z"
 | File | Subcommand | Responsability |
 | -- | -- | -- |
 | `root.go` | root | Wires subcommands, sets version, silences usage on error |
-| `mock.go` | `mock` | Flag validation, parse modes, streaming file I/O, bounded worker-pool concurrency for large generation counts |
+| `mock.go` | `mock` | Flag validation, parse modes, streaming file I/O |
 | `request.go` | `request` | HTTP request construction, mock injection into URL/QS/body, response formatting |
 | `utils.go` | — | Shared `CommandOptions`, duration/size formatters |
 | `version.go` | — | Build-time version variable |
@@ -547,7 +567,7 @@ go build -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=x.y.z"
 
 | Filename Sulfix | What should test |
 | -- | -- |
-| `_test.go` | Unit tests for internal helpers, e.g. `extractMockMethod`, `interpretString`, `processJsonMap`, etc. Uses `testify/suite` |
+| `_test.go` | Unit tests for internal functions, helpers, etc. Uses `testify/suite` |
 | `_e2e_test.go` | End-to-end CLI tests via `NewRootCmd` with a captured `bytes.Buffer` as `Out`. Validates full flag combinations and output |
 
 ##### Adding a New Subcommand

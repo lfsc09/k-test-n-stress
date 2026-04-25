@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -41,8 +40,8 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 
 			// Decide the URL prefix
 			if forceHttps {
-				if strings.HasPrefix(urlStr, "http://") {
-					urlStr = "https://" + strings.TrimPrefix(urlStr, "http://")
+				if after, ok := strings.CutPrefix(urlStr, "http://"); ok {
+					urlStr = "https://" + after
 				} else if !strings.HasPrefix(urlStr, "https://") {
 					urlStr = "https://" + urlStr
 				}
@@ -53,7 +52,10 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			}
 
 			// Mock Url params if present
-			urlStr = processStr(urlStr, mocker, os.Stderr)
+			urlStr, err := processMFStr(urlStr, mocker)
+			if err != nil {
+				return fmt.Errorf("error processing URL '%w'", err)
+			}
 
 			// Parse the URL
 			parsedUrl, err := url.Parse(urlStr)
@@ -67,7 +69,10 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				parts := strings.SplitN(queryParam, "=", 2)
 				if len(parts) == 2 {
 					key := strings.TrimSpace(parts[0])
-					value := processStr(strings.TrimSpace(parts[1]), mocker, os.Stderr)
+					value, err := processMFStr(strings.TrimSpace(parts[1]), mocker)
+					if err != nil {
+						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
+					}
 					query.Add(key, value)
 				}
 			}
@@ -83,12 +88,12 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				}
 
 				// Process the parsed map
-				if err := processJsonMap(parseMap, mocker); err != nil {
+				if err := processMFJson(parseMap, mocker, nil); err != nil {
 					return fmt.Errorf("%w", err)
 				}
 
 				// Sanitize the parsed map
-				sanitizeJsonMap(parseMap)
+				sanitizeGeneratedJson(parseMap)
 
 				// Convert back to JSON string
 				jsonBytes, err := json.Marshal(parseMap)
@@ -134,7 +139,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				fmt.Fprintf(opts.Out, "Status: %s\n", resp.Status)
 				if withMetrics {
 					fmt.Fprintf(opts.Out, "Metrics:\n")
-					fmt.Fprintf(opts.Out, "  Duration:%s\n", formatDurationMetrics(duration))
+					fmt.Fprintf(opts.Out, "  Duration:%s\n", formatDurationMetrics(duration.Seconds()))
 					fmt.Fprintf(opts.Out, "  Size:%s\n", formatSizeMetrics(int64(len(respBody))))
 				}
 				fmt.Fprintf(opts.Out, "URL: %s\n", req.URL.String())
