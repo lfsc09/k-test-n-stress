@@ -54,7 +54,7 @@ If the user specifies a name, append it after the datetime prefix.
 
 ## Proposed Memory Updates
 
-<Exact bullet points to add/change in `.claude/memories.md`, organized by section (e.g. Architecture Decisions, Known Gotchas, Current State). Write `None.` if nothing needs updating.>
+<Exact bullet points to add/change/remove information in `.claude/memories.md`. Information inside `.claude/memories.md` must ONLY contain the CURRENT state regarding (Critical project details, Critical architecture details, Critical gotchas, Security details). Write `None.` if nothing needs updating. This file must be lean and only contain critical information that the developer agent needs to know before touching any source files. Do not add implementation details, opinions, or non-critical information here. Keep the file clean and focused on the current state of the project.>
 ```
 
 - Steps must be concrete and actionable — another developer should be able to implement them without needing to re-read the code.
@@ -66,7 +66,7 @@ If the user specifies a name, append it after the datetime prefix.
 
 ### Package Structure
 
-- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded), and a pre-built `regen.Generator` for CVV generation. **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `List(out io.Writer)` renders the available functions table using `tableLineData`.
+- **`mocker/`**: Fake data generation engine. `mocker.New()` returns a `*Mock` wrapping a `jaswdr/faker` instance, a per-instance `*rand.Rand` (uniquely seeded), and a pre-built `*RandexpGenerator` for CVV generation (see `mocker/randexp.go`). **`Mock` is not goroutine-safe — each goroutine must call `mocker.New()` independently.** `Generate(mockFunction string, functionParams []string)` is the single entry point. `List(out io.Writer)` renders the available functions table using `tableLineData`.
 - **`cmd/`**: All Cobra command definitions. Entry points are `Execute()` (production) and `NewRootCmd(opts *CommandOptions) *cobra.Command` (testable). `CommandOptions` carries an `Out io.Writer` — all subcommands must honor it via `cmd.SetOut(opts.Out)`.
 
 ### Key Dependencies
@@ -75,22 +75,16 @@ If the user specifies a name, append it after the datetime prefix.
 | -- | -- |
 | `github.com/spf13/cobra` | CLI command structure |
 | `github.com/jaswdr/faker/v2` | ~90% of mock functions |
-| `github.com/zach-klippenstein/goregen` | `Regex.regex` and `Payment.creditCardCvv` — via per-instance `regen.Generator` backed by `m.rng` |
 | `github.com/mohae/deepcopy` | Deep-copying JSON template objects |
 | `github.com/stretchr/testify` | Test assertions and suites |
 
 ### Testing Patterns
 
-- Unit tests: `cmd/*_test.go` using `testify/suite`. Cover internal helpers like `extractMockMethod`, `interpretString`, `processJsonMap`.
-- E2E tests: `cmd/*_e2e_test.go`. Use `NewRootCmd` with a `bytes.Buffer` as `Out` to capture full CLI output.
-- Mocker utilities: `mocker/helpers_test.go`.
+- Unit tests: `*_test.go` using `testify/suite`.
+- E2E tests: `*_e2e_test.go`. Use `NewRootCmd` with a `bytes.Buffer` as `Out` to capture full CLI output.
 
 ### Patterns to Know
 
 **Adding a mock function**: (1) `List()` entry via `tableLineData`, (2) `case` in `Generate` switch, (3) utility in `helpers.go` if needed, (4) test in `helpers_test.go`.
 
 **Adding a subcommand**: (1) `cmd/<name>.go` with `NewXxxCmd(opts *CommandOptions)`, (2) `cmd.SetOut(opts.Out)` inside constructor, (3) register in `NewRootCmd`, (4) E2E tests in `cmd/<name>_e2e_test.go`.
-
-**Concurrency (`mock` command)**: bounded worker pool in `cmd/mock.go`. `analyzeTemplate` determines the split point and whether to use the sequential path (below `concurrencyThreshold = 10_000` items). `runWorkerPool` dispatches `WorkUnit` sub-batches to `runtime.NumCPU()` workers via a buffered jobs channel; each worker owns its own `mocker.New()`. A single writer goroutine reads from the results channel and streams output. `routeOutput` handles the sequential path; `streamOutput` handles the concurrent path. Files are written atomically via `atomicFileCreate` (temp → rename). OS signals (`SIGINT`/`SIGTERM`) cancel the shared `context.Context`. `--debug` enables a live progress display on stderr.
-
-**`functionParams` convention**: always `[]string`; blank string `""` means "use default". Callers pass positional params; functions parse and apply defaults themselves.

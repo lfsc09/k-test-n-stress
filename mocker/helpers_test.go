@@ -1,8 +1,6 @@
 package mocker
 
 import (
-	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -10,49 +8,58 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type MockerUtilsInternalTestSuite struct {
+type MockerHelpersTestSuite struct {
 	suite.Suite
 }
 
-func TestMockerUtilsInternalTestSuite(t *testing.T) {
-	suite.Run(t, new(MockerUtilsInternalTestSuite))
+func TestMockerHelpersTestSuite(t *testing.T) {
+	suite.Run(t, new(MockerHelpersTestSuite))
 }
 
-// TestMockerConcurrency_NoConcurrentStateSharing verifies that multiple goroutines
-// can call mocker.New() independently and use their own instance without data races.
-// Run with: go test -race ./mocker/
-func (suite *MockerUtilsInternalTestSuite) TestMockerConcurrency_NoConcurrentStateSharing() {
-	numGoroutines := runtime.NumCPU() * 2
-	errCh := make(chan error, numGoroutines)
+/*
+	INVALID STATES
+*/
 
-	var wg sync.WaitGroup
-	for range numGoroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			m := New()
-			for range 500 {
-				if _, err := m.Generate("Person.cpf", nil); err != nil {
-					errCh <- err
-					return
-				}
-				if _, err := m.Generate("Payment.creditCardCvv", nil); err != nil {
-					errCh <- err
-					return
-				}
-			}
-		}()
+func (suite *MockerHelpersTestSuite) TestExtractRegex_InvalidInputs() {
+	tests := []struct {
+		testName       string
+		input          string
+		expectedOutput string
+	}{
+		{
+			testName:       "not between slashes",
+			input:          "abc",
+			expectedOutput: "",
+		},
+		{
+			testName:       "no trailing slash",
+			input:          "/abc",
+			expectedOutput: "",
+		},
+		{
+			testName:       "no begining slash",
+			input:          "abc/",
+			expectedOutput: "",
+		},
+		{
+			testName:       "not between slashes 2",
+			input:          "abc/def",
+			expectedOutput: "",
+		},
 	}
 
-	wg.Wait()
-	close(errCh)
-
-	for err := range errCh {
-		assert.NoError(suite.T(), err)
+	for _, tt := range tests {
+		output, err := extractRegex(tt.input)
+		assert.Empty(suite.T(), output, "Test case '%s' failed", tt.testName)
+		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestCalculateChecksum_ValidInputs() {
+/*
+	VALID STATES
+*/
+
+func (suite *MockerHelpersTestSuite) TestCalculateChecksum_ValidInputs() {
 	tests := []struct {
 		testName       string
 		digits         []int
@@ -91,7 +98,7 @@ func (suite *MockerUtilsInternalTestSuite) TestCalculateChecksum_ValidInputs() {
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestExtractRegex_ValidInputs() {
+func (suite *MockerHelpersTestSuite) TestExtractRegex_ValidInputs() {
 	tests := []struct {
 		testName       string
 		input          string
@@ -126,42 +133,7 @@ func (suite *MockerUtilsInternalTestSuite) TestExtractRegex_ValidInputs() {
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestExtractRegex_InvalidInputs() {
-	tests := []struct {
-		testName       string
-		input          string
-		expectedOutput string
-	}{
-		{
-			testName:       "not between slashes",
-			input:          "abc",
-			expectedOutput: "",
-		},
-		{
-			testName:       "no trailing slash",
-			input:          "/abc",
-			expectedOutput: "",
-		},
-		{
-			testName:       "no begining slash",
-			input:          "abc/",
-			expectedOutput: "",
-		},
-		{
-			testName:       "not between slashes 2",
-			input:          "abc/def",
-			expectedOutput: "",
-		},
-	}
-
-	for _, tt := range tests {
-		output, err := extractRegex(tt.input)
-		assert.Empty(suite.T(), output, "Test case '%s' failed", tt.testName)
-		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
-	}
-}
-
-func (suite *MockerUtilsInternalTestSuite) TestFormatDatetime() {
+func (suite *MockerHelpersTestSuite) TestFormatDatetime() {
 	fixedTime := time.Date(2026, 4, 7, 15, 4, 5, 123000000, time.UTC)
 	tests := []struct {
 		testName       string
@@ -182,7 +154,7 @@ func (suite *MockerUtilsInternalTestSuite) TestFormatDatetime() {
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestParseDateOnly() {
+func (suite *MockerHelpersTestSuite) TestParseDateOnly() {
 	tests := []struct {
 		testName    string
 		input       string
@@ -207,7 +179,7 @@ func (suite *MockerUtilsInternalTestSuite) TestParseDateOnly() {
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestParseTimeOnly() {
+func (suite *MockerHelpersTestSuite) TestParseTimeOnly() {
 	tests := []struct {
 		testName    string
 		input       string
@@ -231,7 +203,7 @@ func (suite *MockerUtilsInternalTestSuite) TestParseTimeOnly() {
 	}
 }
 
-func (suite *MockerUtilsInternalTestSuite) TestParseDatetimeFull() {
+func (suite *MockerHelpersTestSuite) TestParseDatetimeFull() {
 	tests := []struct {
 		testName    string
 		input       string
@@ -249,10 +221,11 @@ func (suite *MockerUtilsInternalTestSuite) TestParseDatetimeFull() {
 			assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
 		} else {
 			assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
-			if tt.testName == "valid datetime" {
+			switch tt.testName {
+			case "valid datetime":
 				assert.Equal(suite.T(), 15, t.Hour(), "Test case '%s' failed", tt.testName)
 				assert.Equal(suite.T(), 4, t.Minute(), "Test case '%s' failed", tt.testName)
-			} else if tt.testName == "valid date-only fallback" {
+			case "valid date-only fallback":
 				assert.Equal(suite.T(), 0, t.Hour(), "Test case '%s' failed", tt.testName)
 				assert.Equal(suite.T(), 0, t.Minute(), "Test case '%s' failed", tt.testName)
 			}

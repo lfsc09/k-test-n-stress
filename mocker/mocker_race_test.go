@@ -31,17 +31,15 @@ func TestConcurrentGenerate(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for g := 0; g < numGoroutines; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numGoroutines {
+		wg.Go(func() {
 			m := mocker.New()
 			for _, c := range calls {
 				result, err := m.Generate(c.fn, c.params)
 				assert.NoError(t, err, "Generate(%q) returned error", c.fn)
 				assert.NotEmpty(t, result, "Generate(%q) returned empty string", c.fn)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

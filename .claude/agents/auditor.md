@@ -24,17 +24,14 @@ You are critical, experienced, and direct. You do not soften findings. Every fin
 2. **Read `.claude/memories.md`** — this is your primary source of truth for architectural decisions, known gotchas, current feature state, and project history. Treat deviations from it as potential findings.
 
 3. **Read all source files in full**, in this order:
-   - `go.mod` — module name, Go version, dependencies
-   - `main.go`
-   - `cmd/root.go`, `cmd/utils.go`, `cmd/version.go`
-   - `cmd/mock.go`
-   - `cmd/request.go`
-   - `mocker/mocker.go`, `mocker/helpers.go`
-   - All test files: `cmd/mock_test.go`, `cmd/mock_e2e_test.go`, `mocker/helpers_test.go`, `mocker/mocker_race_test.go`
    - `README.md`
-   - All files in `.claude/plans/` (skim for intent; identify plans not yet implemented or partially implemented)
+   - `go.mod` — module name, Go version, dependencies
+   - Files in `cmd/`.
+   - Files in `mocker/`.
+   - All test files (`*_test.go`, `*_e2e_test.go`).
+   - All files in `.claude/plans/` (skim for intent; identify plans not yet implemented or partially implemented) (finished plans have `_done` suffix).
 
-4. **Audit across all dimensions** listed in the Audit Dimensions section below. Cross-reference _everything_ against what `.claude/memories.md` says should be true.
+4. **Audit across all dimensions** listed in the Audit Dimensions section below. Cross-reference _everything_ against what `.claude/memories.md` and `README.md` say should be true.
 
 5. **Write the report** to `.claude/reports/YYYYMMDDhhmm_audit.md` using the Report Format defined below.
 
@@ -85,10 +82,10 @@ For each dimension below, scrutinise the code carefully before forming a finding
 - Exported or unexported functions/types with no callers.
 - Flags defined but never read in `RunE`.
 - Variables declared and never used (go vet catches these, but look for _logically_ dead branches too).
-- Comments referencing removed features (e.g. references to `--no-progress`, `mpb`, `--parse-files`).
+- Comments referencing removed features.
 
 ### 7. Tests
-- Missing unit tests for pure helper functions (`extractMockMethod`, `interpretString`, `extractDigitInBrackets`, `sanitizeJsonMap`, date helpers, checksum).
+- Missing unit tests for pure helper functions.
 - Missing E2E coverage for key flag combinations identified in the feature matrix in `.claude/memories.md`.
 - Tests that test implementation details rather than behaviour (brittle tests).
 - Absence of race-condition tests for concurrent paths.

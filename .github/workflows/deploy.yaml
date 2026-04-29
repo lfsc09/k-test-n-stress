@@ -38,9 +38,12 @@ jobs:
       - name: Build binaries
         run: |
           mkdir dist
-          GOOS=linux  GOARCH=amd64 go build \
+          GOOS=linux GOARCH=amd64 go build \
             -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=${{ steps.version.outputs.version }}" \
             -o dist/ktns-linux-amd64
+          GOOS=darwin GOARCH=amd64 go build \
+            -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=${{ steps.version.outputs.version }}" \
+            -o dist/ktns-darwin-amd64
           GOOS=windows GOARCH=amd64 go build \
             -ldflags "-X github.com/lfsc09/k-test-n-stress/cmd.Version=${{ steps.version.outputs.version }}" \
             -o dist/ktns-windows-amd64.exe
@@ -59,6 +62,7 @@ jobs:
           name: "v${{ steps.version.outputs.version }}"
           files: |
             dist/ktns-linux-amd64
+            dist/ktns-darwin-amd64
             dist/ktns-windows-amd64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
