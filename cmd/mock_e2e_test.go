@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-const tempInputFilesDir = ".testdata/input"
-const tempOutputFilesDir = ".testdata/output"
+const tempDir = ".testdata"
+const tempInputFilesDir = tempDir + "/input"
+const tempOutputFilesDir = tempDir + "/output"
 
 type MockCmdE2ETestSuite struct {
 	suite.Suite
@@ -32,10 +33,8 @@ func (suite *MockCmdE2ETestSuite) SetupSuite() {
 
 func (suite *MockCmdE2ETestSuite) TearDownSuite() {
 	// Clean up temp directories after tests
-	err := os.RemoveAll(tempInputFilesDir)
-	assert.NoError(suite.T(), err, "Failed to remove temp input files directory")
-	err = os.RemoveAll(tempOutputFilesDir)
-	assert.NoError(suite.T(), err, "Failed to remove temp output files directory")
+	err := os.RemoveAll(tempDir)
+	assert.NoError(suite.T(), err, "Failed to remove temp directory")
 }
 
 func (suite *MockCmdE2ETestSuite) executeCommand(args ...string) (string, error) {
