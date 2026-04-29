@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"time"
 )
 
@@ -29,21 +30,21 @@ func formatDurationMetrics(seconds float64) string {
 }
 
 // formatSizeMetrics formats a file size in bytes into a human-readable string with appropriate units (KB, MB, GB).
-func formatSizeMetrics(size int64) string {
+func formatSizeMetrics(size uint64) string {
 	switch {
 	case size >= gb:
-		return fmt.Sprintf("%.2f GB", float64(size)/float64(gb))
+		return fmt.Sprintf("%.2fGB", float64(size)/float64(gb))
 	case size >= mb:
-		return fmt.Sprintf("%.2f MB", float64(size)/float64(mb))
+		return fmt.Sprintf("%.2fMB", float64(size)/float64(mb))
 	case size >= kb:
-		return fmt.Sprintf("%.2f KB", float64(size)/float64(kb))
+		return fmt.Sprintf("%.2fKB", float64(size)/float64(kb))
 	default:
 		return fmt.Sprintf("%d Bytes", size)
 	}
 }
 
 // formatNumberMetrics formats a large number into a human-readable string with appropriate units (K, M, B, T).
-func formatNumberMetrics(number int64) string {
+func formatNumberMetrics(number uint64) string {
 	switch {
 	case number >= 1_000_000_000_000:
 		return fmt.Sprintf("%.0fTr", float64(number)/1_000_000_000_000)
@@ -56,4 +57,11 @@ func formatNumberMetrics(number int64) string {
 	default:
 		return fmt.Sprintf("%d", number)
 	}
+}
+
+// MemSnapshotBytes returns the currently used memory and total memory in bytes by forcing a GC and reading the memory stats.
+func memSnapshotBytes() (uint64, uint64) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.Alloc, m.Sys
 }

@@ -82,26 +82,30 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			var body io.Reader
 			if data != "" {
 				// Parse the string object content
-				var parseMap map[string]any
-				if err := json.Unmarshal([]byte(data), &parseMap); err != nil {
+				var rawJson map[string]any
+				if err := json.Unmarshal([]byte(data), &rawJson); err != nil {
 					return fmt.Errorf("failed to parse JSON from the provided --data '%w'", err)
 				}
 
-				// Process the parsed map
-				if err := processMFJson(parseMap, mocker, nil); err != nil {
-					return fmt.Errorf("%w", err)
-				}
-
-				// Sanitize the parsed map
-				sanitizeGeneratedJson(parseMap)
-
-				// Convert back to JSON string
-				jsonBytes, err := json.Marshal(parseMap)
+				blueprintInitialNode := &TemplateNode{Type: NodeObject, Repeat: 1}
+				_, err := compileJSONTemplate(rawJson, blueprintInitialNode)
 				if err != nil {
-					return fmt.Errorf("failed to convert JSON map to string '%w'", err)
+					return err
 				}
 
-				body = bytes.NewBuffer(jsonBytes)
+				var memBuf bytes.Buffer
+				// Write into the in-memory buffer
+				bufferWriter := NewBufferWriter(&memBuf, nil)
+				if bufferWriter == nil {
+					return fmt.Errorf("failed to initialize buffer writer: no valid output destination configured")
+				}
+
+				blueprintInitialNode.GenerateJSON(mocker, nil, bufferWriter)
+				if err := bufferWriter.Done(); err != nil {
+					return err
+				}
+
+				body = &memBuf
 			}
 
 			// Create request
@@ -140,7 +144,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				if withMetrics {
 					fmt.Fprintf(opts.Out, "Metrics:\n")
 					fmt.Fprintf(opts.Out, "  Duration:%s\n", formatDurationMetrics(duration.Seconds()))
-					fmt.Fprintf(opts.Out, "  Size:%s\n", formatSizeMetrics(int64(len(respBody))))
+					fmt.Fprintf(opts.Out, "  Size:%s\n", formatSizeMetrics(uint64(len(respBody))))
 				}
 				fmt.Fprintf(opts.Out, "URL: %s\n", req.URL.String())
 				fmt.Fprintf(opts.Out, "Headers:\n")
