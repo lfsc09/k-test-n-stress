@@ -1,15 +1,9 @@
-package cmd
+package utils
 
 import (
 	"fmt"
-	"io"
-	"runtime"
 	"time"
 )
-
-type CommandOptions struct {
-	Out io.Writer
-}
 
 const (
 	kb = 1 << 10
@@ -17,8 +11,8 @@ const (
 	gb = 1 << 30
 )
 
-// formatDurationMetrics formats a duration in seconds into a human-readable string with appropriate units (µs, ms, s).
-func formatDurationMetrics(seconds float64) string {
+// FormatDurationMetrics formats a duration in seconds into a human-readable string with appropriate units (µs, ms, s).
+func FormatDurationMetrics(seconds float64) string {
 	switch {
 	case seconds < float64(time.Millisecond)/float64(time.Second):
 		return fmt.Sprintf("%.2fµs", seconds*1e6)
@@ -29,8 +23,8 @@ func formatDurationMetrics(seconds float64) string {
 	}
 }
 
-// formatSizeMetrics formats a file size in bytes into a human-readable string with appropriate units (KB, MB, GB).
-func formatSizeMetrics(size uint64) string {
+// FormatSizeMetrics formats a file size in bytes into a human-readable string with appropriate units (KB, MB, GB).
+func FormatSizeMetrics(size uint64) string {
 	switch {
 	case size >= gb:
 		return fmt.Sprintf("%.2fGB", float64(size)/float64(gb))
@@ -43,8 +37,8 @@ func formatSizeMetrics(size uint64) string {
 	}
 }
 
-// formatNumberMetrics formats a large number into a human-readable string with appropriate units (K, M, B, T).
-func formatNumberMetrics(number uint64) string {
+// FormatNumberMetrics formats a large number into a human-readable string with appropriate units (K, M, B, T).
+func FormatNumberMetrics(number uint64) string {
 	switch {
 	case number >= 1_000_000_000_000:
 		return fmt.Sprintf("%.0fTr", float64(number)/1_000_000_000_000)
@@ -57,11 +51,4 @@ func formatNumberMetrics(number uint64) string {
 	default:
 		return fmt.Sprintf("%d", number)
 	}
-}
-
-// MemSnapshotBytes returns the currently used memory and total memory in bytes by forcing a GC and reading the memory stats.
-func memSnapshotBytes() (uint64, uint64) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Alloc, m.Sys
 }

@@ -245,7 +245,7 @@ Where:
 
 Some of the Mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
 
-> e.g.: `{{ functionName:{arg1}:{arg2}:... }}`
+> e.g.: `{{ functionName:{arg1}:{arg2}:{argN} }}`
 
 ```json
 { "words": "Loreum.words:{5}" }

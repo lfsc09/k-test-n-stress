@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,185 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/lfsc09/k-test-n-stress/internal/mock"
 	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/spf13/cobra"
 )
-
-const defaultAtomicTempFilePrefix = ".ktns-tmp"
-const defaultBufferSizeBytes uint = 1024 * 1024 // 1 MB
-
-// parseDynamicValueRegex matches a value that is entirely {{ … }}.
-var parseDynamicValueRegex *regexp.Regexp = regexp.MustCompile(`^\s*{{(.*)}}\s*$`)
-
-// parseArrayItemBracketNumberRegex matches array item keys with bracketed numbers, e.g. "phones[5]" and captures the key and number.
-var parseArrayItemBracketNumberRegex *regexp.Regexp = regexp.MustCompile(`^(.+)\[(\d+)\]$`)
-
-/*
-Blueprint Tree definition for JSON template compilation and generation.
-*/
-type TemplateNodeType int
-
-const (
-	NodeObject TemplateNodeType = iota
-	NodeArray
-	NodeString
-)
-
-type TemplateNode struct {
-	Type     TemplateNodeType
-	Key      string          // Sanitized JSON object key
-	Value    string          // JSON object value (Only for NodeString type)
-	Children []*TemplateNode // For NodeObject and NodeArray types
-	Repeat   uint            // For key[n] syntax (Only for NodeObject and NodeString types)
-}
-
-/*
-DebugStats for the --debug display.
-*/
-type DebugStats struct {
-	StartTime        time.Time
-	GenerateTotal    uint
-	Generated        atomic.Uint32
-	UsedMemPeakBytes atomic.Uint64
-	BytesWritten     atomic.Uint32
-}
-
-/*
-AtomicFile represents a file being written to with an atomic commit or abort.
-The caller should write to the provided *os.File, then call commit() on success or abort() on failure.
-*/
-type AtomicFile struct {
-	Path string
-	File *os.File
-}
-
-// NewAtomicFile creates an AtomicFile struct for the given finalPath.
-// It opens a temp file in the same directory as finalPath.
-func NewAtomicFile(finalPath string) (*AtomicFile, error) {
-	dir := filepath.Dir(finalPath)
-	f, err := os.CreateTemp(dir, defaultAtomicTempFilePrefix+"*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file in '%s': %w", dir, err)
-	}
-
-	return &AtomicFile{
-		Path: finalPath,
-		File: f,
-	}, nil
-}
-
-// Commit closes the file and renames it to the final path. If closing the file fails, it returns an error and does not rename.
-func (af *AtomicFile) Commit() error {
-	if cerr := af.File.Close(); cerr != nil {
-		return cerr
-	}
-	return os.Rename(af.File.Name(), af.Path)
-}
-
-// Abort closes the file and removes the temp file. It ignores any errors since this is meant to be called in a defer after a failed write.
-func (af *AtomicFile) Abort() {
-	_ = af.File.Close()
-	_ = os.Remove(af.File.Name())
-}
-
-/*
-BufferWriter for buffered writing the output.
-*/
-type BufferWriter struct {
-	atomicFileRef *AtomicFile
-	writer        *bufio.Writer
-	BufferSize    uint
-}
-
-// NewBufferWriter creates a BufferWriter with a bufio.Writer that writes to both stdout and the atomic file (if set).
-// The buffer size is fixed to `defaultBufferSizeBytes`.
-// Note: MultiWriter writes sequentially to each writer.
-func NewBufferWriter(stdoutWriter io.Writer, atomicFile *AtomicFile) *BufferWriter {
-	writers := []io.Writer{}
-	if stdoutWriter != nil {
-		writers = append(writers, stdoutWriter)
-	}
-	if atomicFile != nil {
-		writers = append(writers, atomicFile.File)
-	}
-
-	if len(writers) == 0 {
-		return nil
-	}
-
-	multiWriter := io.MultiWriter(writers...)
-	bufferWriter := bufio.NewWriterSize(multiWriter, int(defaultBufferSizeBytes))
-
-	return &BufferWriter{
-		BufferSize:    defaultBufferSizeBytes,
-		atomicFileRef: atomicFile,
-		writer:        bufferWriter,
-	}
-}
-
-// Done flushes the buffer and commits the atomic file if set. If flushing fails, it aborts the atomic file and returns the error.
-func (mw *BufferWriter) Done() error {
-	if err := mw.writer.Flush(); err != nil {
-		mw.Abort()
-		return err
-	}
-	if mw.atomicFileRef != nil {
-		return mw.atomicFileRef.Commit()
-	}
-	return nil
-}
-
-// Abort aborts the atomic file if set in case of error.
-func (mw *BufferWriter) Abort() {
-	if mw.atomicFileRef != nil {
-		mw.atomicFileRef.Abort()
-	}
-}
-
-// WriteJSONEncode marshals the given value into JSON and writes it to the buffer.
-// This is used for writing JSON values, ensuring proper escaping and formatting.
-func (mw *BufferWriter) WriteJSONEncode(value any, stats *DebugStats) error {
-	jsonBytes, err := json.Marshal(value)
-	if err != nil {
-		mw.Abort()
-		return err
-	}
-
-	byteWritten, err := mw.writer.Write(jsonBytes)
-	if err != nil {
-		mw.Abort()
-		return err
-	}
-
-	if stats != nil {
-		stats.BytesWritten.Add(uint32(byteWritten))
-	}
-
-	return nil
-}
-
-// WriteJSONRaw writes the given string to the buffer as is, without JSON encoding.
-// This is used for writing JSON structural characters like {, }, [, ], :, and ,.
-func (mw *BufferWriter) WriteJSONRaw(jsonStr string, stats *DebugStats) error {
-	byteWritten, err := mw.writer.WriteString(jsonStr)
-	if err != nil {
-		mw.Abort()
-		return err
-	}
-
-	if stats != nil {
-		stats.BytesWritten.Add(uint32(byteWritten))
-	}
-
-	return nil
-}
 
 func NewMockCmd(opts *CommandOptions) *cobra.Command {
 	mockCmd := &cobra.Command{
@@ -282,7 +110,7 @@ Examples:
 			parseJsonFileSet := cmd.Flags().Changed("parse-json-file")
 			parseCsv, _ := cmd.Flags().GetString("parse-csv")
 			parseCsvFile, _ := cmd.Flags().GetString("parse-csv-file")
-			// parseCsvFileSet := cmd.Flags().Changed("parse-csv-file")
+			parseCsvFileSet := cmd.Flags().Changed("parse-csv-file")
 			generate, _ := cmd.Flags().GetInt("generate")
 			toStdout, _ := cmd.Flags().GetBool("to-stdout")
 			toFile, _ := cmd.Flags().GetString("to-file")
@@ -354,9 +182,14 @@ Examples:
 			}
 
 			if runningParseStr {
-				// Process the string
+				// Compile the string value into mock blocks
+				mockBlocks, err := mock.CompileMockBlocks(parseStr)
+				if err != nil {
+					return err
+				}
+
 				mocker := mocker.New()
-				mockedStr, err := processMFStr(parseStr, mocker)
+				mockedStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
 				if err != nil {
 					return err
 				}
@@ -370,7 +203,7 @@ Examples:
 				var jsonPath string
 				if toFileSet {
 					var err error
-					jsonPath, err = resolveJSONToFilePath(parseJsonFileSet, parseJsonFile, toFile)
+					jsonPath, err = mock.ResolveJSONToFilePath(parseJsonFileSet, parseJsonFile, toFile)
 					if err != nil {
 						return err
 					}
@@ -401,25 +234,25 @@ Examples:
 					}
 				}
 
-				blueprintInitialNode := &TemplateNode{Type: NodeObject, Repeat: uint(generate)}
-				templateGenerateTotal, err := compileJSONTemplate(rawJson, blueprintInitialNode)
+				blueprintInitialNode := &mock.TemplateJsonNode{Type: mock.NodeObject, Repeat: uint(generate)}
+				templateGenerateTotal, err := mock.CompileJSONTemplate(rawJson, blueprintInitialNode)
 				if err != nil {
 					return err
 				}
 
-				stats := &DebugStats{
+				stats := &mock.DebugStats{
 					GenerateTotal: templateGenerateTotal * uint(generate),
 					StartTime:     time.Now(),
 				}
 
 				if debugMode {
-					debugStop := startDebugRoutine(ctx, stats, os.Stderr)
+					debugStop := mock.StartDebugRoutine(ctx, stats, os.Stderr)
 					defer debugStop()
 				}
 
-				var atomicFile *AtomicFile
+				var atomicFile *mock.AtomicFile
 				if toFileSet {
-					atomicFile, err = NewAtomicFile(jsonPath)
+					atomicFile, err = mock.NewAtomicFile(jsonPath)
 					if err != nil {
 						return err
 					}
@@ -430,7 +263,7 @@ Examples:
 					stdoutWriter = opts.Out
 				}
 
-				bufferWriter := NewBufferWriter(stdoutWriter, atomicFile)
+				bufferWriter := mock.NewBufferWriter(stdoutWriter, atomicFile)
 				if bufferWriter == nil {
 					return fmt.Errorf("failed to initialize output writer: no valid output destination configured")
 				}
@@ -443,7 +276,79 @@ Examples:
 			}
 
 			if runningParseCsv || runningParseCsvFile {
-				return nil
+				var csvPath string
+				if toFileSet {
+					var err error
+					csvPath, err = mock.ResolveCSVToFilePath(parseCsvFileSet, parseCsvFile, toFile)
+					if err != nil {
+						return err
+					}
+				}
+
+				var csvTemplateObj map[string]any
+				if runningParseCsv {
+					// Parse the raw template object content
+					if err := json.Unmarshal([]byte(parseCsv), &csvTemplateObj); err != nil {
+						return fmt.Errorf("failed to parse CSV from the provided --parse-csv '%w'", err)
+					}
+				}
+				if runningParseCsvFile {
+					// Verify the file exists
+					if _, err := os.Stat(parseCsvFile); os.IsNotExist(err) {
+						return fmt.Errorf("template file not found: '%s'", parseCsvFile)
+					}
+
+					// Read the template file
+					templateFileContent, err := os.ReadFile(parseCsvFile)
+					if err != nil {
+						return fmt.Errorf("failed to read --parse-csv-file '%w'", err)
+					}
+
+					// Parse the raw template object content
+					if err = json.Unmarshal(templateFileContent, &csvTemplateObj); err != nil {
+						return fmt.Errorf("failed to parse CSV from --parse-csv-file '%w'", err)
+					}
+				}
+
+				blueprint := &mock.TemplateCsv{Repeat: uint(generate)}
+				templateGenerateTotal, err := mock.CompileCSVTemplate(csvTemplateObj, blueprint)
+				if err != nil {
+					return err
+				}
+
+				stats := &mock.DebugStats{
+					GenerateTotal: templateGenerateTotal * uint(generate),
+					StartTime:     time.Now(),
+				}
+
+				if debugMode {
+					debugStop := mock.StartDebugRoutine(ctx, stats, os.Stderr)
+					defer debugStop()
+				}
+
+				var atomicFile *mock.AtomicFile
+				if toFileSet {
+					atomicFile, err = mock.NewAtomicFile(csvPath)
+					if err != nil {
+						return err
+					}
+				}
+
+				var stdoutWriter io.Writer
+				if toStdout {
+					stdoutWriter = opts.Out
+				}
+
+				bufferWriter := mock.NewBufferWriter(stdoutWriter, atomicFile)
+				if bufferWriter == nil {
+					return fmt.Errorf("failed to initialize output writer: no valid output destination configured")
+				}
+
+				mocker := mocker.New()
+				blueprint.GenerateCSV(mocker, stats, bufferWriter)
+				if err := bufferWriter.Done(); err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -465,389 +370,4 @@ Examples:
 	mockCmd.SetOut(opts.Out)
 
 	return mockCmd
-}
-
-// GenerateJSON generates mock data based on the TemplateNode structure and writes the output as JSON to the provided writer.
-func (tn *TemplateNode) GenerateJSON(mocker *mocker.Mock, stats *DebugStats, bw *BufferWriter) error {
-	switch tn.Type {
-	case NodeObject:
-		// Generate array of objects if [n] syntax is used in the key, otherwise just one object
-		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("[", stats)
-		}
-		for r := range tn.Repeat {
-			if r > 0 {
-				bw.WriteJSONRaw(",", stats)
-			}
-			bw.WriteJSONRaw("{", stats)
-			for i, child := range tn.Children {
-				if i > 0 {
-					bw.WriteJSONRaw(",", stats)
-				}
-				keyStr := fmt.Sprintf("%q:", child.Key)
-				bw.WriteJSONRaw(keyStr, stats)
-				if err := child.GenerateJSON(mocker, stats, bw); err != nil {
-					return err
-				}
-			}
-			bw.WriteJSONRaw("}", stats)
-		}
-		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("]", stats)
-		}
-	case NodeArray:
-		bw.WriteJSONRaw("[", stats)
-		for i, child := range tn.Children {
-			if i > 0 {
-				bw.WriteJSONRaw(",", stats)
-			}
-			if err := child.GenerateJSON(mocker, stats, bw); err != nil {
-				return err
-			}
-		}
-		bw.WriteJSONRaw("]", stats)
-	case NodeString:
-		// Try to find the mock function in the "value"
-		interpretedValue, isMockFunction := parseDynamicValue(tn.Value)
-		mockValue := interpretedValue
-
-		// If its a mock function, extract the function name and parameters
-		var functionName string
-		var params []string
-		var err error
-		if isMockFunction {
-			functionName, params, err = parseMockFunction(interpretedValue)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Generate array of values if [n] syntax is used in the key, otherwise just one value
-		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("[", stats)
-		}
-		for r := range tn.Repeat {
-			if r > 0 {
-				bw.WriteJSONRaw(",", stats)
-			}
-			if isMockFunction {
-				var err error
-				mockValue, err = mocker.Generate(functionName, params)
-				if err != nil {
-					return err
-				}
-			}
-			bw.WriteJSONEncode(mockValue, stats)
-		}
-		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("]", stats)
-		}
-		if stats != nil {
-			stats.Generated.Add(uint32(tn.Repeat))
-		}
-	}
-
-	return nil
-}
-
-// processMFStr process mock functions from a string. The function looks for patterns in the format {{ functionName:{arg1}:{arg2}:{argN} }}.
-func processMFStr(parseStr string, mocker *mocker.Mock) (string, error) {
-	var parsedStr strings.Builder
-	s := parseStr
-	for {
-		// Find the next opening "{{"
-		start := strings.Index(s, "{{")
-		if start == -1 {
-			parsedStr.WriteString(s)
-			break
-		}
-		// Write everything before the opening "{{"
-		parsedStr.WriteString(s[:start])
-		s = s[start+2:] // skip past "{{"
-
-		// Find the closing "}}" — single "}" is allowed inside
-		end := -1
-		for i := 0; i < len(s)-1; i++ {
-			if s[i] == '}' && s[i+1] == '}' {
-				end = i
-				break
-			}
-		}
-		if end == -1 {
-			// No closing "}}" found — treat the rest as literal
-			parsedStr.WriteString("{{")
-			parsedStr.WriteString(s)
-			break
-		}
-
-		inner := strings.TrimSpace(s[:end])
-		s = s[end+2:] // skip past "}}"
-
-		functionName, params, err := parseMockFunction(inner)
-		if err != nil {
-			return "", fmt.Errorf("%w", err)
-		} else {
-			mockValue, err := mocker.Generate(functionName, params)
-			if err != nil {
-				return "", fmt.Errorf("%w", err)
-			} else {
-				parsedStr.WriteString(mockValue)
-			}
-		}
-	}
-	return parsedStr.String(), nil
-}
-
-// compileJSONTemplate walks through the raw JSON template and compiles it into a TemplateNode tree structure, and
-// calculates the total number of items to be generated based on the presence of [n] patterns in the keys.
-func compileJSONTemplate(obj map[string]any, node *TemplateNode) (uint, error) {
-	var totalGenerate uint = 0
-
-	for key, value := range obj {
-		// Handle key[n] syntax
-		keyRepeat := uint(1)
-		cleanKey := key
-		if matches := parseArrayItemBracketNumberRegex.FindStringSubmatch(key); len(matches) == 3 {
-			cleanKey = matches[1]
-			keyRepeat64, _ := strconv.ParseUint(matches[2], 10, 64)
-			keyRepeat = uint(keyRepeat64)
-		}
-
-		childNode := &TemplateNode{Key: cleanKey, Repeat: keyRepeat}
-
-		switch typedValue := value.(type) {
-		case map[string]any:
-			childNode.Type = NodeObject
-			childGenerate, err := compileJSONTemplate(typedValue, childNode)
-			if err != nil {
-				return 0, err
-			}
-			totalGenerate += childGenerate * keyRepeat
-		case []any:
-			childNode.Type = NodeArray
-			if keyRepeat > 1 {
-				return 0, fmt.Errorf("invalid key '%s': array item keys cannot use [n] syntax to specify repeat count", key)
-			}
-			for _, arrItem := range typedValue {
-				arrItemNode := &TemplateNode{Repeat: 1}
-				switch typedArrItem := arrItem.(type) {
-				case map[string]any:
-					arrItemNode.Type = NodeObject
-					childGenerate, err := compileJSONTemplate(typedArrItem, arrItemNode)
-					if err != nil {
-						return 0, err
-					}
-					childNode.Children = append(childNode.Children, arrItemNode)
-					totalGenerate += childGenerate
-				case []any:
-					return 0, fmt.Errorf("nested arrays are not supported in json template")
-				case string:
-					arrItemNode.Type = NodeString
-					arrItemNode.Value = typedArrItem
-					childNode.Children = append(childNode.Children, arrItemNode)
-					totalGenerate++
-				default:
-					arrItemNode.Type = NodeString
-					arrItemNode.Value = arrItem.(string)
-					childNode.Children = append(childNode.Children, arrItemNode)
-					totalGenerate++
-				}
-			}
-		case string:
-			childNode.Type = NodeString
-			childNode.Value = typedValue
-			totalGenerate += keyRepeat
-		default:
-			childNode.Type = NodeString
-			childNode.Value = value.(string)
-			totalGenerate += keyRepeat
-		}
-
-		node.Children = append(node.Children, childNode)
-	}
-
-	return totalGenerate, nil
-}
-
-// parseDynamicValue interprets a string value, checking if it contains a mock function between {{ }}.
-// If it does, it returns the function name and true.
-// If not, it returns the original string and false.
-func parseDynamicValue(rawValue string) (string, bool) {
-	if rawValue == "" {
-		return "", false
-	}
-
-	matches := parseDynamicValueRegex.FindStringSubmatch(rawValue)
-	if len(matches) > 0 {
-		return strings.TrimSpace(matches[1]), true
-	}
-
-	return rawValue, false
-}
-
-// parseMockFunction splits a raw string of format "func:{arg1}:{arg2}:...".
-// It handles regex args wrapped with slashes (/.../) and value args wrapped with curly
-// braces ({...}) to avoid splitting inside them. The colon (:) outside both delimiters
-// acts as the separator between positional parameters.
-// Returns: function name, slice of parameter strings, and an error if any parameter
-// after the function name is not wrapped in {…} or /…/.
-func parseMockFunction(rawValue string) (string, []string, error) {
-	if rawValue == "" {
-		return "", nil, nil
-	}
-	var parts []string
-	var buf strings.Builder
-	inRegex := false
-	inValue := false
-	valueOpened := false // tracks if a {…} block was opened for the current param
-	paramCount := 0
-	inBare := false
-
-	trimmed := strings.TrimSpace(rawValue)
-
-	for _, char := range trimmed {
-		switch {
-		case char == '{' && !inRegex && !inValue:
-			// Open a value token — do not write the brace
-			inValue = true
-			valueOpened = true
-		case char == '}' && inValue:
-			// Close the value token — do not write the brace
-			inValue = false
-		case char == '/' && !inValue:
-			// Toggle regex mode; always include the slash in the buffer
-			inRegex = !inRegex
-			buf.WriteRune(char)
-		case char == ':' && !inRegex && !inValue:
-			// Delimiter outside both token types — flush buffer
-			parts = append(parts, buf.String())
-			buf.Reset()
-			paramCount++
-			// If we have passed the function name and a bare token was detected, error
-			if paramCount >= 1 && inBare {
-				return "", nil, fmt.Errorf("mock function parameter '%s' must be wrapped in {…} for a value or /…/ for a regex", parts[len(parts)-1])
-			}
-			inBare = false
-			valueOpened = false
-		default:
-			// All other characters, including content inside {…} or /…/
-			buf.WriteRune(char)
-			// Mark bare only when outside any delimiter and past the function name
-			if paramCount >= 1 && !inRegex && !inValue {
-				inBare = true
-			}
-		}
-	}
-
-	// Add the final piece (there's no trailing `:` — but a trailing `:` means the last
-	// param is an empty string that must still be included).
-	// Include when: buffer has content, a {…} block was opened, still inside a delimiter,
-	// or at least one separator colon has been seen (paramCount >= 1), which means a
-	// trailing empty param after the last colon is intentional.
-	if buf.Len() > 0 || inValue || valueOpened || paramCount >= 1 {
-		parts = append(parts, buf.String())
-	}
-
-	// Check for bare token at end of input (after function name)
-	if paramCount >= 1 && inBare {
-		return "", nil, fmt.Errorf("mock function parameter '%s' must be wrapped in {…} for a value or /…/ for a regex", buf.String())
-	}
-	return parts[0], parts[1:], nil
-}
-
-// resolveJSONToFilePath determines the output file path for JSON output based on the provided flags and template filename. It follows these rules:
-// 1. If --to-json-file is set with a non-empty filename, use that.
-// 2. If --to-json-file is set but the filename is empty, and --parse-json-file is set, derive the output filename by removing ".template" from the template filename.
-// 3. If --to-json-file is set but the filename is empty, and --parse-json-file is not set, default to "output.json" in the current working directory.
-func resolveJSONToFilePath(parseJsonFileSet bool, parseJsonFile string, toJsonFile string) (string, error) {
-	// Specific file provided via --to-json-file, use it directly
-	if toJsonFile != "" {
-		return toJsonFile, nil
-	}
-
-	// Default filename based on --parse-json-file template name
-	if parseJsonFileSet {
-		return strings.TrimSuffix(parseJsonFile, ".template.json") + ".json", nil
-	}
-
-	// Default filename in current working directory `output.json`
-	dir, e := workingDir()
-	if e != nil {
-		return "", e
-	}
-	defaultPath := filepath.Join(dir, "output.json")
-	return defaultPath, nil
-}
-
-// workingDir returns the current working directory.
-// Used to resolve the default output path for --to-json-file and --to-csv-file
-// when no explicit filename is provided and the source is not --parse-json-file.
-func workingDir() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not determine working directory: %w", err)
-	}
-	return dir, nil
-}
-
-// startDebugRoutine launches a goroutine that prints live progress to out (always
-// os.Stderr in production) at 200ms intervals. Call the returned stop function to
-// terminate the display and print a final newline.
-func startDebugRoutine(ctx context.Context, stats *DebugStats, out io.Writer) (stop func()) {
-	innerCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-
-	render := func(final bool) {
-		elapsed := time.Since(stats.StartTime).Seconds()
-		generated := stats.Generated.Load()
-		outputSizeBytes := stats.BytesWritten.Load()
-		percentDone := 0.0
-		if stats.GenerateTotal > 0 {
-			percentDone = float64(generated) / float64(stats.GenerateTotal) * 100
-		}
-		usedMemPeakBytes := stats.UsedMemPeakBytes.Load()
-		usedMemBytes, reservedMemSystemBytes := memSnapshotBytes()
-
-		if usedMemBytes > usedMemPeakBytes {
-			usedMemPeakBytes = usedMemBytes
-			stats.UsedMemPeakBytes.Store(usedMemPeakBytes)
-		}
-
-		// '\r' at the start to overwrite the previous line, making it look like a live-updating single line of output
-		strOutput := fmt.Sprintf("\r[debug] Elapsed: %s | Progress: %s / %s (%.1f%%) | Mem: %s ⌈%s⌉ [%s] | Output Size: ~%s",
-			formatDurationMetrics(elapsed),
-			formatNumberMetrics(uint64(generated)),
-			formatNumberMetrics(uint64(stats.GenerateTotal)),
-			percentDone,
-			formatSizeMetrics(usedMemBytes),
-			formatSizeMetrics(usedMemPeakBytes),
-			formatSizeMetrics(reservedMemSystemBytes),
-			formatSizeMetrics(uint64(outputSizeBytes)),
-		)
-
-		fmt.Fprint(out, strOutput)
-		if final {
-			fmt.Fprintln(out)
-		}
-	}
-
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				render(false)
-			case <-innerCtx.Done():
-				render(true)
-				return
-			}
-		}
-	}()
-
-	return func() {
-		cancel()
-		<-done
-	}
 }

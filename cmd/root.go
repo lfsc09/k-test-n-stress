@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 )
+
+type CommandOptions struct {
+	Out io.Writer
+}
 
 func NewRootCmd(opts *CommandOptions) *cobra.Command {
 	if opts == nil {

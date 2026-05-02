@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lfsc09/k-test-n-stress/internal/mock"
+	"github.com/lfsc09/k-test-n-stress/internal/utils"
 	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/spf13/cobra"
 )
@@ -52,13 +54,18 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			}
 
 			// Mock Url params if present
-			urlStr, err := processMFStr(urlStr, mocker)
+			// Compile the string value into mock blocks
+			mockBlocks, err := mock.CompileMockBlocks(urlStr)
+			if err != nil {
+				return fmt.Errorf("error processing URL '%w'", err)
+			}
+			mockedUrlStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
 			if err != nil {
 				return fmt.Errorf("error processing URL '%w'", err)
 			}
 
 			// Parse the URL
-			parsedUrl, err := url.Parse(urlStr)
+			parsedUrl, err := url.Parse(mockedUrlStr)
 			if err != nil {
 				return fmt.Errorf("error parsing URL '%w'", err)
 			}
@@ -69,11 +76,18 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				parts := strings.SplitN(queryParam, "=", 2)
 				if len(parts) == 2 {
 					key := strings.TrimSpace(parts[0])
-					value, err := processMFStr(strings.TrimSpace(parts[1]), mocker)
+
+					// Compile the string value into mock blocks
+					mockBlocks, err := mock.CompileMockBlocks(strings.TrimSpace(parts[1]))
 					if err != nil {
 						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
 					}
-					query.Add(key, value)
+					mockedQsStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
+					if err != nil {
+						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
+					}
+
+					query.Add(key, mockedQsStr)
 				}
 			}
 			parsedUrl.RawQuery = query.Encode()
@@ -87,15 +101,15 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 					return fmt.Errorf("failed to parse JSON from the provided --data '%w'", err)
 				}
 
-				blueprintInitialNode := &TemplateNode{Type: NodeObject, Repeat: 1}
-				_, err := compileJSONTemplate(rawJson, blueprintInitialNode)
+				blueprintInitialNode := &mock.TemplateJsonNode{Type: mock.NodeObject, Repeat: 1}
+				_, err := mock.CompileJSONTemplate(rawJson, blueprintInitialNode)
 				if err != nil {
 					return err
 				}
 
 				var memBuf bytes.Buffer
 				// Write into the in-memory buffer
-				bufferWriter := NewBufferWriter(&memBuf, nil)
+				bufferWriter := mock.NewBufferWriter(&memBuf, nil)
 				if bufferWriter == nil {
 					return fmt.Errorf("failed to initialize buffer writer: no valid output destination configured")
 				}
@@ -143,8 +157,8 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				fmt.Fprintf(opts.Out, "Status: %s\n", resp.Status)
 				if withMetrics {
 					fmt.Fprintf(opts.Out, "Metrics:\n")
-					fmt.Fprintf(opts.Out, "  Duration:%s\n", formatDurationMetrics(duration.Seconds()))
-					fmt.Fprintf(opts.Out, "  Size:%s\n", formatSizeMetrics(uint64(len(respBody))))
+					fmt.Fprintf(opts.Out, "  Duration:%s\n", utils.FormatDurationMetrics(duration.Seconds()))
+					fmt.Fprintf(opts.Out, "  Size:%s\n", utils.FormatSizeMetrics(uint64(len(respBody))))
 				}
 				fmt.Fprintf(opts.Out, "URL: %s\n", req.URL.String())
 				fmt.Fprintf(opts.Out, "Headers:\n")
