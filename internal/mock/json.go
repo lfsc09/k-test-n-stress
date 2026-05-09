@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-
-	"github.com/lfsc09/k-test-n-stress/mocker"
 )
 
 // parseArrayItemBracketNumberRegex matches array item keys with bracketed numbers, e.g. "phones[5]" and captures the key and number.
@@ -28,44 +26,64 @@ type TemplateJsonNode struct {
 }
 
 // GenerateJSON generates mock data based on the TemplateJsonNode structure and writes the output as JSON to the provided writer.
-func (tn *TemplateJsonNode) GenerateJSON(mocker *mocker.Mock, stats *DebugStats, bw *BufferWriter) error {
+func (tn *TemplateJsonNode) GenerateJSON(faker *Faker, stats *DebugStats, bw *BufferWriter) error {
 	switch tn.Type {
 	case NodeObject:
 		// Generate array of objects if [n] syntax is used in the key, otherwise just one object
 		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("[", stats)
-		}
-		for r := range tn.Repeat {
-			if r > 0 {
-				bw.WriteJSONRaw(",", stats)
-			}
-			bw.WriteJSONRaw("{", stats)
-			for i, child := range tn.Children {
-				if i > 0 {
-					bw.WriteJSONRaw(",", stats)
-				}
-				keyStr := fmt.Sprintf("%q:", child.Key)
-				bw.WriteJSONRaw(keyStr, stats)
-				if err := child.GenerateJSON(mocker, stats, bw); err != nil {
-					return err
-				}
-			}
-			bw.WriteJSONRaw("}", stats)
-		}
-		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("]", stats)
-		}
-	case NodeArray:
-		bw.WriteJSONRaw("[", stats)
-		for i, child := range tn.Children {
-			if i > 0 {
-				bw.WriteJSONRaw(",", stats)
-			}
-			if err := child.GenerateJSON(mocker, stats, bw); err != nil {
+			if err := bw.WriteJSONRaw("[", stats); err != nil {
 				return err
 			}
 		}
-		bw.WriteJSONRaw("]", stats)
+		for r := range tn.Repeat {
+			if r > 0 {
+				if err := bw.WriteJSONRaw(",", stats); err != nil {
+					return err
+				}
+			}
+			if err := bw.WriteJSONRaw("{", stats); err != nil {
+				return err
+			}
+			for i, child := range tn.Children {
+				if i > 0 {
+					if err := bw.WriteJSONRaw(",", stats); err != nil {
+						return err
+					}
+				}
+				keyStr := fmt.Sprintf("%q:", child.Key)
+				if err := bw.WriteJSONRaw(keyStr, stats); err != nil {
+					return err
+				}
+				if err := child.GenerateJSON(faker, stats, bw); err != nil {
+					return err
+				}
+			}
+			if err := bw.WriteJSONRaw("}", stats); err != nil {
+				return err
+			}
+		}
+		if tn.Repeat > 1 {
+			if err := bw.WriteJSONRaw("]", stats); err != nil {
+				return err
+			}
+		}
+	case NodeArray:
+		if err := bw.WriteJSONRaw("[", stats); err != nil {
+			return err
+		}
+		for i, child := range tn.Children {
+			if i > 0 {
+				if err := bw.WriteJSONRaw(",", stats); err != nil {
+					return err
+				}
+			}
+			if err := child.GenerateJSON(faker, stats, bw); err != nil {
+				return err
+			}
+		}
+		if err := bw.WriteJSONRaw("]", stats); err != nil {
+			return err
+		}
 	case NodeString:
 		// Compile the string value into mock blocks
 		mockBlocks, err := CompileMockBlocks(tn.Value)
@@ -75,20 +93,28 @@ func (tn *TemplateJsonNode) GenerateJSON(mocker *mocker.Mock, stats *DebugStats,
 
 		// Generate array of values if [n] syntax is used in the key, otherwise just one value
 		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("[", stats)
+			if err := bw.WriteJSONRaw("[", stats); err != nil {
+				return err
+			}
 		}
 		for r := range tn.Repeat {
 			if r > 0 {
-				bw.WriteJSONRaw(",", stats)
+				if err := bw.WriteJSONRaw(",", stats); err != nil {
+					return err
+				}
 			}
-			mockedStr, err := ExecuteMockBlocks(mockBlocks, mocker)
+			mockedStr, err := ExecuteMockBlocks(mockBlocks, faker)
 			if err != nil {
 				return err
 			}
-			bw.WriteJSONEncode(mockedStr, stats)
+			if err := bw.WriteJSONEncode(mockedStr, stats); err != nil {
+				return err
+			}
 		}
 		if tn.Repeat > 1 {
-			bw.WriteJSONRaw("]", stats)
+			if err := bw.WriteJSONRaw("]", stats); err != nil {
+				return err
+			}
 		}
 		if stats != nil {
 			stats.Generated.Add(uint32(tn.Repeat))

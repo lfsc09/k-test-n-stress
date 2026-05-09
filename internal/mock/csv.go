@@ -2,8 +2,6 @@ package mock
 
 import (
 	"fmt"
-
-	"github.com/lfsc09/k-test-n-stress/mocker"
 )
 
 type TemplateCsv struct {
@@ -17,21 +15,29 @@ type TemplateCsvNode struct {
 }
 
 // GenerateCSV generates mock data based on the TemplateCsv structure and writes the output as CSV to the provided writer.
-func (blueprint *TemplateCsv) GenerateCSV(mocker *mocker.Mock, stats *DebugStats, bw *BufferWriter) error {
+func (blueprint *TemplateCsv) GenerateCSV(faker *Faker, stats *DebugStats, bw *BufferWriter) error {
 	// Write CSV header
 	for i, colNode := range blueprint.Columns {
 		if i > 0 {
-			bw.WriteCSVRaw(",", stats)
+			if err := bw.WriteCSVRaw(",", stats); err != nil {
+				return err
+			}
 		}
-		bw.WriteCSV(colNode.ColName, stats)
+		if err := bw.WriteCSV(colNode.ColName, stats); err != nil {
+			return err
+		}
 	}
-	bw.WriteCSVRaw("\n", stats)
+	if err := bw.WriteCSVRaw("\n", stats); err != nil {
+		return err
+	}
 
 	// Generate rows based on the blueprint
 	for range blueprint.Repeat {
 		for i, colNode := range blueprint.Columns {
 			if i > 0 {
-				bw.WriteCSVRaw(",", stats)
+				if err := bw.WriteCSVRaw(",", stats); err != nil {
+					return err
+				}
 			}
 
 			// Compile the string value into mock blocks
@@ -40,7 +46,7 @@ func (blueprint *TemplateCsv) GenerateCSV(mocker *mocker.Mock, stats *DebugStats
 				return err
 			}
 
-			mockedStr, err := ExecuteMockBlocks(mockBlocks, mocker)
+			mockedStr, err := ExecuteMockBlocks(mockBlocks, faker)
 			if err != nil {
 				return err
 			}

@@ -69,19 +69,19 @@ func (suite *MockCmdTestSuite) TestCLIMultipleParseFlagsSimultaneously() {
 	}{
 		{
 			testName: "Should raise error when both --parse-str and --parse-json-file are provided",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json-file", "test.json"},
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json-file", "test.json"},
 		},
 		{
 			testName: "Should raise error when both --parse-str and --parse-json are provided",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '"},
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '"},
 		},
 		{
 			testName: "Should raise error when both --parse-json and --parse-json-file are provided",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-json-file", "test.json"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--parse-json-file", "test.json"},
 		},
 		{
 			testName: "Should raise error when all three --parse-str, --parse-json and --parse-json-file are provided",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--parse-json-file", "test.json"},
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--parse-json-file", "test.json"},
 		},
 	}
 
@@ -98,15 +98,15 @@ func (suite *MockCmdTestSuite) TestCLIParseStrWithGenerateFlagInvalidUse() {
 	}{
 		{
 			testName: "Should raise error when using --generate with --parse-str",
-			input:    []string{"mock", "--parse-str", "Hello {{ Person.name }}", "--generate", "5"},
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--generate", "5"},
 		},
 		{
 			testName: "Should raise error when --generate value is equal to 0",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "0", "--to-json-stdout"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--generate", "0", "--to-json-stdout"},
 		},
 		{
 			testName: "Should raise error when --generate value is negative",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '", "--generate", "-1", "--to-json-stdout"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--generate", "-1", "--to-json-stdout"},
 		},
 	}
 
@@ -140,7 +140,7 @@ func (suite *MockCmdTestSuite) TestCLIParseWithoutOutputFlag() {
 	}{
 		{
 			testName: "Should raise error when using --parse-json without an output flag",
-			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{ Person.name }}\"} '"},
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '"},
 		},
 		{
 			testName: "Should raise error when using --parse-json-file without an output flag",
@@ -171,7 +171,7 @@ func (suite *MockCmdTestSuite) TestCLIParseStr_ValidInputs() {
 		},
 		{
 			testName:    "Should mock from --parse-str (dynamic value)",
-			input:       []string{"mock", "--parse-str", "Hello {{ Person.name }}"},
+			input:       []string{"mock", "--parse-str", "Hello {{Person.Name}}"},
 			assertRegex: `Hello .+`,
 		},
 	}
@@ -196,37 +196,37 @@ func (suite *MockCmdTestSuite) TestCLIParseJson_ValidInputs() {
 		},
 		{
 			testName:    "Should mock from --parse-json with simple JSON object [dynamic value]",
-			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`, "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"name":"{{Person.Name}}"}`, "--to-stdout"},
 			assertRegex: `^\{"name":".+"\}$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with --generate producing a JSON array of 2 objects",
-			args:        []string{"mock", "--parse-json", `{"name":"{{ Person.name }}"}`, "--generate", "2", "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"name":"{{Person.Name}}"}`, "--generate", "2", "--to-stdout"},
 			assertRegex: `^\[\{"name":".+"\},\{"name":".+"\}\]$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with simple JSON object [fixed array values]",
-			args:        []string{"mock", "--parse-json", `{"names":["John Smith", "{{ Person.name }}"]}`, "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"names":["John Smith", "{{Person.Name}}"]}`, "--to-stdout"},
 			assertRegex: `^\{"names":\["John Smith",".+"\]\}$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with nested JSON object [dynamic value]",
-			args:        []string{"mock", "--parse-json", `{"employee":{"name":"{{ Person.name }}"}}`, "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"employee":{"name":"{{Person.Name}}"}}`, "--to-stdout"},
 			assertRegex: `^\{"employee":\{"name":".+"\}\}$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with simple JSON object [dynamic array values]",
-			args:        []string{"mock", "--parse-json", `{"names[2]":"{{ Person.name }}"}`, "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"names[2]":"{{Person.Name}}"}`, "--to-stdout"},
 			assertRegex: `^\{"names":\[".+",".+"\]\}$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with nested JSON object [dynamic array value]",
-			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{ Person.name }}"}}`, "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--to-stdout"},
 			assertRegex: `^\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}$`,
 		},
 		{
 			testName:    "Should mock from --parse-json with --generate producing a JSON root array of 2 objects [dynamic array value]",
-			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{ Person.name }}"}}`, "--generate", "2", "--to-stdout"},
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--generate", "2", "--to-stdout"},
 			assertRegex: `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
 		},
 	}
@@ -254,43 +254,43 @@ func (suite *MockCmdTestSuite) TestCLIParseJsonFile_ValidInputs() {
 		{
 			testName:     "Should mock from --parse-json-file with simple JSON object [dynamic value]",
 			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
-			jsonTemplate: `{"name":"{{ Person.name }}"}`,
+			jsonTemplate: `{"name":"{{Person.Name}}"}`,
 			assertRegex:  `^\{"name":".+"\}$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with --generate producing a JSON root array of 2 objects",
 			args:         []string{"mock", "--parse-json-file", "", "--generate", "2", "--to-stdout"},
-			jsonTemplate: `{"name":"{{ Person.name }}"}`,
+			jsonTemplate: `{"name":"{{Person.Name}}"}`,
 			assertRegex:  `^\[\{"name":".+"\},\{"name":".+"\}\]$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with simple JSON object [fixed array values]",
 			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
-			jsonTemplate: `{"names":["John Smith","{{ Person.name }}"]}`,
+			jsonTemplate: `{"names":["John Smith","{{Person.Name}}"]}`,
 			assertRegex:  `^\{"names":\["John Smith",".+"\]\}$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with nested JSON object [dynamic value]",
 			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
-			jsonTemplate: `{"employee":{"name":"{{ Person.name }}"}}`,
+			jsonTemplate: `{"employee":{"name":"{{Person.Name}}"}}`,
 			assertRegex:  `^\{"employee":\{"name":".+"\}\}$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with simple JSON object [dynamic array values]",
 			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
-			jsonTemplate: `{"names[2]":"{{ Person.name }}"}`,
+			jsonTemplate: `{"names[2]":"{{Person.Name}}"}`,
 			assertRegex:  `^\{"names":\[".+",".+"\]\}$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with nested JSON object [dynamic array value]",
 			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
-			jsonTemplate: `{"employee[2]":{"name":"{{ Person.name }}"}}`,
+			jsonTemplate: `{"employee[2]":{"name":"{{Person.Name}}"}}`,
 			assertRegex:  `^\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}$`,
 		},
 		{
 			testName:     "Should mock from --parse-json-file with --generate producing a JSON root array of 2 objects [dynamic array value]",
 			args:         []string{"mock", "--parse-json-file", "", "--generate", "2", "--to-stdout"},
-			jsonTemplate: `{"employee[2]":{"name":"{{ Person.name }}"}}`,
+			jsonTemplate: `{"employee[2]":{"name":"{{Person.Name}}"}}`,
 			assertRegex:  `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
 		},
 	}
@@ -323,7 +323,7 @@ func (suite *MockCmdTestSuite) TestCLIParseJsonToFile_ValidInputs() {
 	}{
 		{
 			testName:    "Should mock from --parse-json with --generate producing a JSON root array of 2 objects to an output file [dynamic array value]",
-			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{ Person.name }}"}}`, "--generate", "2", "--to-file", outputFilename},
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--generate", "2", "--to-file", outputFilename},
 			assertRegex: `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
 		},
 	}

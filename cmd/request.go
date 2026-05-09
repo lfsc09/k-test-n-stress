@@ -12,7 +12,6 @@ import (
 
 	"github.com/lfsc09/k-test-n-stress/internal/mock"
 	"github.com/lfsc09/k-test-n-stress/internal/utils"
-	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +31,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			withMetrics, _ := cmd.Flags().GetBool("with-metrics")
 			onlyResponseBody, _ := cmd.Flags().GetBool("only-response-body")
 
-			mocker := mocker.New()
+			faker := mock.NewFaker()
 			method = strings.ToUpper(method)
 
 			// Validate flags
@@ -59,7 +58,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("error processing URL '%w'", err)
 			}
-			mockedUrlStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
+			mockedUrlStr, err := mock.ExecuteMockBlocks(mockBlocks, faker)
 			if err != nil {
 				return fmt.Errorf("error processing URL '%w'", err)
 			}
@@ -82,7 +81,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
 					}
-					mockedQsStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
+					mockedQsStr, err := mock.ExecuteMockBlocks(mockBlocks, faker)
 					if err != nil {
 						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
 					}
@@ -114,7 +113,7 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 					return fmt.Errorf("failed to initialize buffer writer: no valid output destination configured")
 				}
 
-				blueprintInitialNode.GenerateJSON(mocker, nil, bufferWriter)
+				blueprintInitialNode.GenerateJSON(faker, nil, bufferWriter)
 				if err := bufferWriter.Done(); err != nil {
 					return err
 				}

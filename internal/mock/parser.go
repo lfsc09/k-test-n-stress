@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/lfsc09/k-test-n-stress/mocker"
 )
 
 // splitBlocksRegex matches all occurrences of {{ … }} in a string.
@@ -95,9 +93,9 @@ func CompileMockBlocks(rawValue string) ([]*MockBlock, error) {
 	return compiledBlocks, nil
 }
 
-// ExecuteMockBlocks takes a slice of MockBlock and executes the function calls in dynamic blocks using the provided mocker,
+// ExecuteMockBlocks takes a slice of MockBlock and executes the function calls in dynamic blocks using the provided faker,
 // and returns the final string result with all dynamic blocks replaced by their executed values.
-func ExecuteMockBlocks(blocks []*MockBlock, mocker *mocker.Mock) (string, error) {
+func ExecuteMockBlocks(blocks []*MockBlock, faker *Faker) (string, error) {
 	var resultBuilder strings.Builder
 
 	for _, block := range blocks {
@@ -110,7 +108,7 @@ func ExecuteMockBlocks(blocks []*MockBlock, mocker *mocker.Mock) (string, error)
 			// Each function call executes sequentially, but their values overwrite each other and only the result of the last function call is returned as the value of the block
 			for _, call := range block.Calls {
 				blockResultBuilder.Reset()
-				mockedValue, err := mocker.Generate(call.FunctionName, call.Params)
+				mockedValue, err := faker.Generate(call.FunctionName, call.Params)
 				if err != nil {
 					return "", err
 				}
@@ -164,7 +162,7 @@ func parseDynamicBlock(rawValue string) ([]*MockCall, error) {
 		return nil, fmt.Errorf("empty dynamic block")
 	}
 
-	// Split inner content on top-level '|' (not inside {…})
+	// Split inner content on top-level '|' (not inside parameters 'fn:{…}')
 	// Track curly brace depth so that '|' inside parameter values is treated as a literal character, not as a function separator
 	var functionSegmentsStr []string
 	start := 0
@@ -209,20 +207,20 @@ func parseDynamicBlock(rawValue string) ([]*MockCall, error) {
 }
 
 // parseFunctionAndParams parses "funcName:{arg1}:{arg2}:{argN}" and returns the function name and parameter slice.
-// Parameters must be enclosed in {…}; empty parameters may be written as {} or as an empty slot between two colons (::).
+// Parameters must be enclosed in '{}'; empty parameters may be written as 'fn:{}' or as an empty slot 'fn:'.
 // Regex parameters are written as {/pattern/} — backslash-escaped slashes (\/) inside the pattern are not treated as closing delimiters.
-// The {…} braces are stripped from returned parameter values.
+// The '{}' braces are stripped from returned parameter values.
 func parseFunctionAndParams(rawValue string) (string, []string, error) {
 	trimmed := strings.TrimSpace(rawValue)
 	if trimmed == "" {
-		return "", nil, nil
+		return "", []string{}, nil
 	}
 
 	// Extract function name
 	firstColonIdx := strings.IndexByte(trimmed, ':')
 	if firstColonIdx < 0 {
 		// Just a function name, zero parameters
-		return trimmed, nil, nil
+		return trimmed, []string{}, nil
 	}
 	if firstColonIdx == 0 {
 		return "", nil, fmt.Errorf("empty function name")

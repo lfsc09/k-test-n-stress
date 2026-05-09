@@ -29,19 +29,19 @@ func (suite *MockJsonTestSuite) TestCompileJSONTemplate_ValidInput() {
 	}{
 		{
 			testName:              "Should compile simple JSON template with one mock function",
-			input:                 `{"city":"{{Address.city}}"}`,
+			input:                 `{"city":"{{Address.City}}"}`,
 			generate:              1,
 			expectedGenerateTotal: 1,
 		},
 		{
 			testName:              "Should compile JSON template with multiple mock functions and nested structure",
-			input:                 `{"user":{"literal":"literal value","name":"{{Person.name}}"}}`,
+			input:                 `{"user":{"literal":"literal value","name":"{{Person.Name}}"}}`,
 			generate:              1,
 			expectedGenerateTotal: 2,
 		},
 		{
 			testName:              "Should compile JSON template with multiple mock functions, nested structure and dynamic arrays",
-			input:                 `{"user[2]":{"literal":"literal value","name":"{{Person.name}}"}}`,
+			input:                 `{"user[2]":{"literal":"literal value","name":"{{Person.Name}}"}}`,
 			generate:              1,
 			expectedGenerateTotal: 4,
 		},

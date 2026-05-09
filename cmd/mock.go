@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/lfsc09/k-test-n-stress/internal/mock"
-	"github.com/lfsc09/k-test-n-stress/mocker"
 	"github.com/spf13/cobra"
 )
 
@@ -23,13 +22,22 @@ func NewMockCmd(opts *CommandOptions) *cobra.Command {
 		Short: "Generate mock data based from a string, an object string or from template files",
 		Long: `Generate mock data based on --parse-str, (--parse-json / --parse-json-file) or (--parse-csv / --parse-csv-file) options, and output to --to-stdout and/or a file --to-file.
 
+Template data:
+
+* The data inside templates are interpreted either as literal blocks or dynamic blocks.
+  Literal blocks are any values not wrapped in double curly braces (e.g. { "key": "thisIsALiteralBlock" }).
+	Dynamic blocks are any values wrapped in double curly braces (e.g. { "key": "{{ thisIsADynamicBlock }}" }). The content inside the double curly braces is parsed as a mock function with optional parameters, and executed to generate mock data.
+	Dynamic blocks can accept multiple mock function calls separated by pipe (|) to either:
+		- Overwrite the output of a mock function with another (e.g. {{ Person.Name | NULL }}, will generate a random name and then overwrite it with null)
+		- Pipe the output of a mock function as an input parameter to another (e.g. {{ Person.Name | CACHE_WRITE:{key} }}, will generate a random name and then write it to a cache)
+
 Mock functions:
 
 * List available mock functions with --list.
 * Always call the mock function with the format {{ functionName:{arg1}:{arg2}:{argN} }}. (Values not wrapped in double curly braces will be considered literal values)
-* When passing parameters to the mock functions, wrap each value in curly braces ({value}) and use colon (:) outside the braces as the separator between parameters (e.g. {{ Number.number::{1}:{100} }}, {{ Date.time:{18:00}:{20:00} }}).
-* Leave a parameter empty (bare :: or {}) to use its default value (e.g. {{ Number.number:::{100} }} leaves decimals and min at their defaults).
-* For regex parameters, wrap the pattern in slashes (/pattern/) instead of curly braces (e.g. {{ Date.date:::/YYYY-MM-DD/ }}, {{ Regex.regex:/[a-z]{3}/ }}). Colons inside /…/ are never treated as delimiters.
+* When passing parameters to the mock functions, wrap each value in curly braces '{value}' and use colon ':' outside the braces as the separator between parameters (e.g. {{ Number.FloatBetween:{2}:{1}:{100} }}, {{ Date.Time:{18:00}:{20:00} }}).
+* Leave a parameter empty (bare ':' or ':{}') to use its default value (e.g. {{ Number.FloatBetween:::{100} }} leaves 'decimals' and 'min' at their defaults).
+* For regex parameters, wrap the pattern in slashes '{/pattern/}' (e.g. {{ Regex.Generate:{/[a-z]{3}/} }}).
 
 Generate N root objects with --generate:
 
@@ -42,7 +50,7 @@ Parsing JSON templates (--parse-json or --parse-json-file):
   e.g.:
   {
     "employees[5]": {
-      "name": "{{ Person.name }}",
+      "name": "{{ Person.Name }}",
     }
   }
 
@@ -58,10 +66,10 @@ Parsing JSON templates (--parse-json or --parse-json-file):
     ]
   }
 
-* To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.phoneNumber }}" } will generate an array of 5 phone numbers)
+* To generate array of values, also use the format "key[5]". (e.g., { "phones[5]": "{{ Person.Phone }}" } will generate an array of 5 phone numbers)
 
   e.g.:
-  { "phones[5]": "{{ Person.phoneNumber }}" }
+  { "phones[5]": "{{ Person.Phone }}" }
 
   Will generate an array of 5 phone numbers.
 
@@ -73,10 +81,11 @@ Parsing JSON templates (--parse-json or --parse-json-file):
 
 Parsing CSV templates (--parse-csv or --parse-csv-file):
 
-* The CSV template must be a single row of comma-separated values, where each value is a string with 'colname:::"value"'.
+* The CSV template must be a single depth Json object, where each 'key: value' pair is interpreted as 'colname: "value"'.
+	The number of rows generated will be determined by the --generate flag (default 1).
 
 	e.g.:
-	name:::"{{ Person.name }}",age:::"{{ Number.number:{18}:{65} }}",email:::"{{ Internet.email }}"
+	{ "name": "{{ Person.Name }}", "age": "{{ Number.IntBetween:{18}:{65} }}", "email": "{{ Person.Email }}" }
 
 	Will generate a CSV with columns "name", "age" and "email" with corresponding mock data.
 
@@ -92,11 +101,15 @@ Output routing:
   or to the template name without .template (for --parse-json-file or --parse-csv-file).
 
 Examples:
-  ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number:{0}:{1}:{100} }} years old'
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --generate 5 --to-stdout --to-json-file ""
-  ktns mock --parse-json '{ "name": "{{ Person.name }}" }' --to-file "path/to/mydata.json"
+  ktns mock --parse-str 'Hello my name is {{ Person.Name }}, I am {{ Number.IntBetween:{1}:{100} }} years old'
+  ktns mock --parse-json '{ "name": "{{ Person.Name }}" }' --generate 5 --to-stdout --to-file ""
+  ktns mock --parse-json '{ "name": "{{ Person.Name }}" }' --to-file "path/to/mydata.json"
   ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-stdout --to-file ""
-  ktns mock --parse-json-file "path/to/employees.template.json" --to-json-file "path/to/mydata.json"
+  ktns mock --parse-json-file "path/to/employees.template.json" --to-file "path/to/mydata.json"
+	ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --generate 10 --to-stdout --to-file ""
+	ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --to-file "path/to/mydata.csv"
+	ktns mock --parse-csv-file "path/to/employees.template.csv" --generate 10 --to-stdout --to-file ""
+	ktns mock --parse-csv-file "path/to/employees.template.csv" --to-file "path/to/mydata.csv"
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Set up OS signal handling so Ctrl-C cancels in-flight work cleanly.
@@ -118,8 +131,8 @@ Examples:
 			debugMode, _ := cmd.Flags().GetBool("debug")
 
 			if list {
-				mocker := mocker.New()
-				mocker.CobraList(opts.Out)
+				faker := mock.NewFaker()
+				printTable(opts.Out, faker.DocsToTable())
 				return nil
 			}
 
@@ -188,8 +201,8 @@ Examples:
 					return err
 				}
 
-				mocker := mocker.New()
-				mockedStr, err := mock.ExecuteMockBlocks(mockBlocks, mocker)
+				faker := mock.NewFaker()
+				mockedStr, err := mock.ExecuteMockBlocks(mockBlocks, faker)
 				if err != nil {
 					return err
 				}
@@ -268,9 +281,11 @@ Examples:
 					return fmt.Errorf("failed to initialize output writer: no valid output destination configured")
 				}
 
-				mocker := mocker.New()
-				blueprintInitialNode.GenerateJSON(mocker, stats, bufferWriter)
-				if err := bufferWriter.Done(); err != nil {
+				faker := mock.NewFaker()
+				if err = blueprintInitialNode.GenerateJSON(faker, stats, bufferWriter); err != nil {
+					return err
+				}
+				if err = bufferWriter.Done(); err != nil {
 					return err
 				}
 			}
@@ -344,9 +359,11 @@ Examples:
 					return fmt.Errorf("failed to initialize output writer: no valid output destination configured")
 				}
 
-				mocker := mocker.New()
-				blueprint.GenerateCSV(mocker, stats, bufferWriter)
-				if err := bufferWriter.Done(); err != nil {
+				faker := mock.NewFaker()
+				if err = blueprint.GenerateCSV(faker, stats, bufferWriter); err != nil {
+					return err
+				}
+				if err = bufferWriter.Done(); err != nil {
 					return err
 				}
 			}
@@ -370,4 +387,55 @@ Examples:
 	mockCmd.SetOut(opts.Out)
 
 	return mockCmd
+}
+
+// printTable prints a formatted table with the given rows to the specified output writer.
+func printTable(out io.Writer, rows [][]string) {
+	colSizes := []int{45, 60}
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineHeader(colSizes))
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	for _, row := range rows {
+		fmt.Fprintf(out, "%s\n", tableLineData(colSizes, row))
+	}
+	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+}
+
+// tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
+func tableLineDivider(colSizes []int) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			line.WriteString(strings.Repeat("-", size))
+		} else {
+			line.WriteString("+" + strings.Repeat("-", size))
+		}
+	}
+	return line.String()
+}
+
+// tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
+func tableLineHeader(colSizes []int) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			fmt.Fprintf(&line, "%-*s", size, "FUNCTION")
+		} else {
+			fmt.Fprintf(&line, "| %-*s", size, "DESCRIPTION")
+		}
+	}
+	return line.String()
+}
+
+// tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
+func tableLineData(colSizes []int, data []string) string {
+	var line strings.Builder
+	for idx, size := range colSizes {
+		if idx == 0 {
+			fmt.Fprintf(&line, "%-*s", size, data[idx])
+		} else {
+			fmt.Fprintf(&line, "| %-*s", size, data[idx])
+		}
+	}
+	return line.String()
 }

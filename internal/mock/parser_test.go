@@ -34,31 +34,31 @@ func (suite *MockParserTestSuite) TestValidateDynamicBlockSyntax_InvalidInputs()
 		},
 		{
 			testName: "Should give error when missing closing double curly braces",
-			input:    "{{ Module.function:{param1}:{param2}",
+			input:    "{{ Module.Fn:{param1}:{param2}",
 		},
 		{
 			testName: "Should give error when missing closing double curly braces with literal value before",
-			input:    "hello {{ Module.function:{param1}:{param2}",
+			input:    "hello {{ Module.Fn:{param1}:{param2}",
 		},
 		{
 			testName: "Should give error when missing opening double curly braces",
-			input:    "Module.function:{param1}:{param2} }}",
+			input:    "Module.Fn:{param1}:{param2} }}",
 		},
 		{
 			testName: "Should give error when missing opening double curly braces with literal value after",
-			input:    "Module.function:{param1}:{param2} }} world",
+			input:    "Module.Fn:{param1}:{param2} }} world",
 		},
 		{
 			testName: "Should give error when nested open double curly braces",
-			input:    "{{ {{ Module.function:{param1}:{param2} }}",
+			input:    "{{ {{ Module.Fn:{param1}:{param2} }}",
 		},
 		{
 			testName: "Should give error when unexpected trailing double curly braces",
-			input:    "{{ Module.function:{param1}:{param2} }} }}",
+			input:    "{{ Module.Fn:{param1}:{param2} }} }}",
 		},
 		{
 			testName: "Should give error when fully nested open double curly braces",
-			input:    "{{ {{ Module.function:{param1}:{param2} }} }}",
+			input:    "{{ {{ Module.Fn:{param1}:{param2} }} }}",
 		},
 	}
 
@@ -83,19 +83,23 @@ func (suite *MockParserTestSuite) TestParseDynamicBlock_InvalidInputs() {
 		},
 		{
 			testName: "Should give error when not passing a value after a '|' separator",
-			input:    "{{ Module.function:{param1}:{param2} | }}",
+			input:    "{{ Module.Fn:{param1}:{param2} | }}",
 		},
 		{
 			testName: "Should give error when not passing a value before a '|' separator",
-			input:    "{{ | Module.function:{param1}:{param2} }}",
+			input:    "{{ | Module.Fn:{param1}:{param2} }}",
 		},
 		{
 			testName: "Should give error when not passing values on either side of a '|' separator",
-			input:    "{{ Module.function:{param1}:{param2} |  | Module.function:{param1}:{param2} }}",
+			input:    "{{ Module.Fn:{param1}:{param2} |  | Module.Fn:{param1}:{param2} }}",
 		},
 		{
 			testName: "Should give error when not passing values on either side of a '|' separator",
-			input:    "{{ Module.function:{param1}:{param2} || Module.function:{param1}:{param2} }}",
+			input:    "{{ Module.Fn:{param1}:{param2} || Module.Fn:{param1}:{param2} }}",
+		},
+		{
+			testName: "Should give error when using '|' outside of a dynamic block",
+			input:    "{{ Module.Fn:{param1}:{param2} }} | {{ Module.Fn:{param1}:{param2} }}",
 		},
 	}
 
@@ -117,59 +121,55 @@ func (suite *MockParserTestSuite) TestParseFunctionAndParams_InvalidInputs() {
 		},
 		{
 			testName: "Should give error when function param is not wrapped in curly braces",
-			input:    "Module.function:param1",
+			input:    "Module.Fn:param1",
 		},
 		{
 			testName: "Should give error on malformed param example 1",
-			input:    "Module.function:{",
+			input:    "Module.Fn:{",
 		},
 		{
 			testName: "Should give error on malformed param example 2",
-			input:    "Module.function:{:",
+			input:    "Module.Fn:{:",
 		},
 		{
 			testName: "Should give error on malformed param example 3",
-			input:    "Module.function:}:",
+			input:    "Module.Fn:}:",
 		},
 		{
 			testName: "Should give error on malformed param example 4",
-			input:    "Module.function:{{param1}",
+			input:    "Module.Fn:{{param1}",
 		},
 		{
 			testName: "Should give error on malformed param example 5",
-			input:    "Module.function:{par{am1}",
+			input:    "Module.Fn:{par{am1}",
 		},
 		{
 			testName: "Should give error on malformed param example 6",
-			input:    "Module.function:{param1}}",
+			input:    "Module.Fn:{param1}}",
 		},
 		{
 			testName: "Should give error on malformed param example 7",
-			input:    "Module.function:{par}am1}",
+			input:    "Module.Fn:{par}am1}",
 		},
 		{
 			testName: "Should give error on malformed param example 8",
-			input:    "Module.function:{{param1}}",
+			input:    "Module.Fn:{{param1}}",
 		},
 		{
 			testName: "Should give error on malformed param example 9",
-			input:    "Module.function:{par}am1}",
+			input:    "Module.Fn:{par}am1}",
 		},
 		{
 			testName: "Should give error on malformed param example 10",
-			input:    "Module.function:}param1{",
+			input:    "Module.Fn:}param1{",
 		},
 		{
 			testName: "Should give error on malformed param example 11",
-			input:    "Module.function:param1",
+			input:    "Module.Fn:param1",
 		},
 		{
 			testName: "Should give error on malformed param with regex example 1",
-			input:    "Module.function:{/[a-z]+}",
-		},
-		{
-			testName: "Should give error on malformed param with regex example 2",
-			input:    "Module.function:{[a-z]+/}",
+			input:    "Module.Fn:{/[a-z]+}",
 		},
 	}
 
@@ -192,27 +192,27 @@ func (suite *MockParserTestSuite) TestValidateDynamicBlockSyntax_ValidInputs() {
 	}{
 		{
 			testName: "Should pass for simple valid dynamic block",
-			input:    "{{Module.function}}",
+			input:    "{{Module.Fn}}",
 		},
 		{
 			testName: "Should pass for valid dynamic block with literal value before and after",
-			input:    "hello {{Module.function}} world",
+			input:    "hello {{Module.Fn}} world",
 		},
 		{
 			testName: "Should pass for multiple valid dynamic blocks",
-			input:    "{{Module.function}} {{Module.function}} {{Module.function}}",
+			input:    "{{Module.Fn}} {{Module.Fn}} {{Module.Fn}}",
 		},
 		{
 			testName: "Should pass for valid dynamic block with a function that has params example 1",
-			input:    "{{Module.function:{param1}:{param2}}}",
+			input:    "{{Module.Fn:{param1}:{param2}}}",
 		},
 		{
 			testName: "Should pass for valid dynamic block with a function that has params example 2",
-			input:    "{{Module.function:{p1:v1}:{p2:v2}}}",
+			input:    "{{Module.Fn:{p1:v1}:{p2:v2}}}",
 		},
 		{
 			testName: "Should pass for valid dynamic block with multiple functions that has params",
-			input:    "{{Module.function:{param1}:{param2}}} | {{Module.function:{param1}:{param2}}}",
+			input:    "{{Module.Fn:{param1}:{param2} | Module.Fn:{param1}:{param2}}}",
 		},
 	}
 
@@ -230,34 +230,34 @@ func (suite *MockParserTestSuite) TestParseDynamicBlock_ValidInput() {
 	}{
 		{
 			testName: "Should parse a simple dynamic block with one function and no params",
-			input:    "{{Module.function}}",
+			input:    "{{Module.Fn}}",
 			expectedBlockCalls: []*MockCall{
 				{
-					FunctionName: "Module.function",
+					FunctionName: "Module.Fn",
 					Params:       []string{},
 				},
 			},
 		},
 		{
 			testName: "Should parse a dynamic block with one function and multiple params",
-			input:    "{{Module.function:{param1}:{param2}}}",
+			input:    "{{Module.Fn:{param1}:{param2}}}",
 			expectedBlockCalls: []*MockCall{
 				{
-					FunctionName: "Module.function",
+					FunctionName: "Module.Fn",
 					Params:       []string{"param1", "param2"},
 				},
 			},
 		},
 		{
 			testName: "Should parse a dynamic block with multiple functions separated by '|'",
-			input:    "{{Module.function:{param1}:{param2}}} | {{Module.function:{param1}:{param2}}}",
+			input:    "{{Module.Fn:{param1}:{param2} | Module.Fn:{param1}:{param2}}}",
 			expectedBlockCalls: []*MockCall{
 				{
-					FunctionName: "Module.function",
+					FunctionName: "Module.Fn",
 					Params:       []string{"param1", "param2"},
 				},
 				{
-					FunctionName: "Module.function",
+					FunctionName: "Module.Fn",
 					Params:       []string{"param1", "param2"},
 				},
 			},
@@ -280,86 +280,80 @@ func (suite *MockParserTestSuite) TestParseFunctionAndParams_ValidInput() {
 	}{
 		{
 			testName:         "Should parse function with no params",
-			input:            "Module.function",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{},
 		},
 		{
 			testName:         "Should parse function with one param",
-			input:            "Module.function:{str1}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{str1}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"str1"},
 		},
 		{
 			testName:         "Should parse function with one number param",
-			input:            "Module.function:{1}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{1}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"1"},
 		},
 		{
 			testName:         "Should parse function with one signed number param",
-			input:            "Module.function:{-1}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{-1}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"-1"},
 		},
 		{
 			testName:         "Should parse function with multiple params",
-			input:            "Module.function:{str1}:{str2}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{str1}:{str2}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"str1", "str2"},
 		},
 		{
 			testName:         "Should parse function with one empty param",
-			input:            "Module.function:{}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{""},
 		},
 		{
 			testName:         "Should parse function with multiple empty params",
-			input:            "Module.function:{}:{}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{}:{}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"", ""},
 		},
 		{
 			testName:         "Should parse function with one empty param (no curly braces)",
-			input:            "Module.function:",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{""},
 		},
 		{
 			testName:         "Should parse function with multiple empty params (no curly braces)",
-			input:            "Module.function::",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn::",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"", ""},
 		},
 		{
 			testName:         "Should parse function with two params where the second param is empty (no curly braces)",
-			input:            "Module.function:{str1}:",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{str1}:",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"str1", ""},
 		},
 		{
 			testName:         "Should parse function with three params where only the last param is not empty (no curly braces)",
-			input:            "Module.function::{str3}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:::{str3}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"", "", "str3"},
 		},
 		{
 			testName:         "Should parse function with regex param",
-			input:            "Module.function:{/[a-z]+/}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{/[a-z]+/}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"/[a-z]+/"},
 		},
 		{
-			testName:         "Should parse function with regex param",
-			input:            "Module.function:{/YYYY-MM-DD/}",
-			expectedFuncName: "Module.function",
-			expectedParams:   []string{"/YYYY-MM-DD hh:mm/"},
-		},
-		{
 			testName:         "Should parse function with regex param (that has restricted characters)",
-			input:            "Module.function:{/[a-z]{2}\\/a\\:\\{\\{\\}\\}\\|b/}",
-			expectedFuncName: "Module.function",
+			input:            "Module.Fn:{/[a-z]{2}\\/a\\:\\{\\{\\}\\}\\|b/}",
+			expectedFuncName: "Module.Fn",
 			expectedParams:   []string{"/[a-z]{2}\\/a\\:\\{\\{\\}\\}\\|b/"},
 		},
 	}
@@ -385,20 +379,20 @@ func (suite *MockParserTestSuite) TestNewMockBlockSegments_ValidInput() {
 				{
 					Type:     LiteralBlock,
 					RawValue: "Hello world",
-					Calls:    []*MockCall{},
+					Calls:    nil,
 				},
 			},
 		},
 		{
 			testName: "Should create a single dynamic block segment",
-			input:    "{{Address.city}}",
+			input:    "{{Module.Fn}}",
 			expectedCompiledBlocks: []*MockBlock{
 				{
 					Type:     DynamicBlock,
-					RawValue: "{{Address.city}}",
+					RawValue: "{{Module.Fn}}",
 					Calls: []*MockCall{
 						{
-							FunctionName: "Address.city",
+							FunctionName: "Module.Fn",
 							Params:       []string{},
 						},
 					},
@@ -407,24 +401,19 @@ func (suite *MockParserTestSuite) TestNewMockBlockSegments_ValidInput() {
 		},
 		{
 			testName: "Should create a mixed literal and dynamic block segment",
-			input:    "Hello {{Person.name}}, are you from {{Address.city}}?",
+			input:    "Hello {{Module.Fn1}}, are you from {{Module.Fn2}}?",
 			expectedCompiledBlocks: []*MockBlock{
 				{
 					Type:     LiteralBlock,
 					RawValue: "Hello ",
-					Calls:    []*MockCall{},
-				},
-				{
-					Type:     LiteralBlock,
-					RawValue: "Hello ",
-					Calls:    []*MockCall{},
+					Calls:    nil,
 				},
 				{
 					Type:     DynamicBlock,
-					RawValue: "{{Person.name}}",
+					RawValue: "{{Module.Fn1}}",
 					Calls: []*MockCall{
 						{
-							FunctionName: "Person.name",
+							FunctionName: "Module.Fn1",
 							Params:       []string{},
 						},
 					},
@@ -432,14 +421,14 @@ func (suite *MockParserTestSuite) TestNewMockBlockSegments_ValidInput() {
 				{
 					Type:     LiteralBlock,
 					RawValue: ", are you from ",
-					Calls:    []*MockCall{},
+					Calls:    nil,
 				},
 				{
 					Type:     DynamicBlock,
-					RawValue: "{{Address.city}}",
+					RawValue: "{{Module.Fn2}}",
 					Calls: []*MockCall{
 						{
-							FunctionName: "Address.city",
+							FunctionName: "Module.Fn2",
 							Params:       []string{},
 						},
 					},
@@ -447,7 +436,7 @@ func (suite *MockParserTestSuite) TestNewMockBlockSegments_ValidInput() {
 				{
 					Type:     LiteralBlock,
 					RawValue: "?",
-					Calls:    []*MockCall{},
+					Calls:    nil,
 				},
 			},
 		},

@@ -2,24 +2,25 @@
 
 # The project
 
-k-test-n-stress is a simple tool written with GO to facilate:
+K-test-n-stress is a simple Go cli tool to:
 
-1. `[mock]` Generate fake data, with structured output.
-2. `[request]` Generate http requests to URLs.
+1. [`[mock]`](#mock) Generate random, structurally valid fake data on demand.
+2. [`[request]`](#request) Generate http requests to URLs.
 3. `[stress]` Stress test URLs.
 
-### Run
+### Basic usage
 
 ```bash
 ktns <command> <flags>
 ```
 
-</br>
+### Advantages
+
+### Disadvantages
+
 </br>
 
 # Commands
-
-</br>
 
 ## `mock`
 
@@ -29,24 +30,22 @@ ktns mock <flags>
 
 ### How it works
 
-The mock command makes use of `dynamic values` which will generate mocked data depending on the desired type of data, by calling specific `Mock functions`.
+A template, which is a Json object, is given as input to be parsed to generate either JSON or CSV output. The template's object values are compiled into `literal` and `dynamic` blocks that will be processed to generate the mock data.
 
-These dynamic values must be called wrapped in (double curly braces) `{{ }}`, like `{{ Person.name }}`, which will dynamically generate a person's name.
+`dynamic blocks` is where you specify the `mock functions` that will generate mocked data depending on the desired type of data. These dynamic blocks must be wrapped in (double curly braces) `{{ }}` (`{{ Person.Name }}`, which will dynamically generate a person's name).
 
-If not wrapped, the value will be interpreted as a literal string value.
+Anything outside `{{ }}` is treated as literal values and is just reflected to the output as is.
 
 ```bash
-ktns mock --parse-str 'Name: {{ Person.name }}'
+ktns mock --parse-str 'Name: {{ Person.Name }}'
 
-# Will generate
 # Name: John Smith
 ```
 
 ```bash
-ktns mock --parse-str 'Name: Person.name'
+ktns mock --parse-str 'Name: Person.Name'
 
-# Will generate
-# Name: Person.name
+# Name: Person.Name
 ```
 
 ### Flags
@@ -75,9 +74,9 @@ ktns mock --parse-str 'Name: Person.name'
   // A literal value
   "key1": "literal value",
   // A dynamic value
-  "key2": "{{ Lorem.word }}",
+  "key2": "{{ Lorem.Word }}",
   // A fixed Array of (literal value, dynamic value, object)
-  "key3": ["literal value", "{{ Lorem.word }}", { "s1key1": "literal value", ... }],
+  "key3": ["literal value", "{{ Lorem.Word }}", { "s1key1": "literal value", ... }],
   // An object
   "key4": {
     "s2key1": "literal word",
@@ -86,7 +85,7 @@ ktns mock --parse-str 'Name: Person.name'
   // An Array Generation of literal values
   "key5[2]": "literal value",
   // An Array Generation of dynamic values
-  "key6[2]": "{{ Lorem.word }}",
+  "key6[2]": "{{ Lorem.Word }}",
   // An Array Generation of object
   "key7[2]": {
     "s3key1": "literal word",
@@ -97,15 +96,18 @@ ktns mock --parse-str 'Name: Person.name'
 
 #### CSV example
 
-```txt
-col1:::"literal value",col2:::"{{ Lorem.word }}"
+```json
+{
+  "col1": "literal value",
+  "col2": "{{ Lorem.Word }}"
+}
 ```
 
 ### Command details
 
 #### `--list`
 
-Get a list of all the available `Mock functions`.
+Get a list of all the available `mock functions`.
 
 ```bash
 ktns mock --list
@@ -114,7 +116,7 @@ ktns mock --list
 #### `--parse-str`
 
 ```bash
-ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::{1}:{100} }} years old.'
+ktns mock --parse-str 'Hello my name is {{ Person.Name }}, I am {{ Number.IntBetween:{1}:{100} }} years old.'
 
 # Hello my name is John Smith, I am 40 years old.
 ```
@@ -126,7 +128,7 @@ Output examples:
 To **STDOUT**
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-stdout
+ktns mock --parse-json '{ "company": "{{ Company.Name }}", "employee": { "name": "{{ Person.Name }}" }}' --to-stdout
 
 # { "company": "Delvalle", "employee": { "name": "Josh Smith" }}
 ```
@@ -134,7 +136,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 To **JSON file**
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.name }}" }}' --to-file ""
+ktns mock --parse-json '{ "company": "{{ Company.Name }}", "employee": { "name": "{{ Person.Name }}" }}' --to-file ""
 ```
 
 ```json
@@ -147,7 +149,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name":
 To a specific **JSON file**
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-file path/to/mydata.json
+ktns mock --parse-json '{ "company": "{{ Company.Name }}" }' --to-file path/to/mydata.json
 ```
 
 ```json
@@ -162,9 +164,9 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --to-file path/to/m
 ```json
 // employee.template.json
 {
-  "company": "{{ Company.name }}",
+  "company": "{{ Company.Name }}",
   "employee": {
-    "name": "{{ Person.name }}",
+    "name": "{{ Person.Name }}",
     "age": "39"
   }
 }
@@ -241,22 +243,46 @@ Where:
 
 ### More Details
 
-#### Mock functions optional parameters
+#### Piping mock functions
 
-Some of the Mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
+In a single `dynamic block` you can pipe mock functions with `|` to either:
 
-> e.g.: `{{ functionName:{arg1}:{arg2}:{argN} }}`
+- Overwrite the output of a mock function with another;
+- Pipe the output of a mock function as an input parameter to another;
 
 ```json
-{ "words": "Loreum.words:{5}" }
+// In this case the NULL function will overwrite the person's name generate
+{ "name": "{{ Person.Name | NULL }}" }
 ```
+
+```json
+// In this case the person's name is also used as input to CACHE_WRITE function
+{ "name": "{{ Person.Name | CACHE_WRITE:{key} }}" }
+```
+
+#### Mock functions parameters
+
+Some of the mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
+
+```txt
+{{ functionName:{arg1}:{arg2}:{argN} }}
+```
+
+```json
+{ "words": "Loreum.Sentence:{5}" }
+```
+
+It is possible to use blank parameters (without value) to assume the **default** value, by leaving blank after the colon `fn:` or a curly brace with nothing inside `fn:{}`.
 
 When working with multiple parameters, you may leave them blank if not used. _(They will assume default values)_
 
 ```json
-// e.g.: `Number.number` expects 3 parameters (<decimal>:<min>:<max>)
+// e.g.: `Number.FloatBetween` expects 3 parameters (<decimal>:<min>:<max>)
 // In this case <decimal> is left blank, and will use its default value.
-{ "age": "Number.number::{18}:{50}" }
+{ "age": "Number.FloatBetween::{18}:{50}" }
+
+// Or
+{ "age": "Number.FloatBetween:{}:{18}:{50}" }
 ```
 
 #### Generating multiple values
@@ -283,7 +309,7 @@ ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 5 --to-s
 ```
 
 ```bash
-ktns mock --parse-csv 'Company:::"{{ Company.name }}"' --generate 5 --to-stdout
+ktns mock --parse-csv 'Company:::"{{ Company.Name }}"' --generate 5 --to-stdout
 ```
 
 ```csv
@@ -301,9 +327,9 @@ When working with JSON, to generate arrays of data, pass the desired number betw
 
 ```json
 {
-  "phones[3]": "{{ Person.phoneNumber }}",  // Will generate an array of 3 values
-  "employees[2]": {                         // Will generate an array of employees with 2 objects
-    "name": "{{ Person.name }}"
+  "phones[3]": "{{ Person.Phone }}",  // Will generate an array of 3 values
+  "employees[2]": {                   // Will generate an array of employees with 2 objects
+    "name": "{{ Person.Name }}"
   }
 }
 ```
@@ -322,16 +348,16 @@ When working with JSON, to generate arrays of data, pass the desired number betw
 
 As described in the JSON template example [here](#json-example), the `value` of a json object key may either:
 
-A `literal value`.
+A `literal block`.
 
 ```json
 { "name": "Some literal value" }
 ```
 
-A `dynamic value` value with the **Faker function name *(between double curly braces)***. 
+A `dynamic block` with the **mock function name *(between double curly braces)***. 
 
 ```json
-{ "name": "{{ Person.name }}" }
+{ "name": "{{ Person.Name }}" }
 ```
 
 An `object`, detailing an inner object.
@@ -340,13 +366,12 @@ An `object`, detailing an inner object.
 { "employee": { ... }}
 ```
 
-A fixed `array` of (`literal value`, `dynamic value`,  `object`).
+A fixed `array` of (`literal block`, `dynamic block`,  `object`).
 
 ```json
-{ "names": ["Some name 1", "{{ Person.name }}", { ... }]}
+{ "names": ["Some name 1", "{{ Person.Name }}", { ... }]}
 ```
 
-</br>
 </br>
 
 ## `request`
@@ -357,7 +382,7 @@ ktns request <flags>
 
 ### How it works
 
-Make use of `Mock functions` inside `--data`, `--qs` and `--url`, to mock dynamic values for the request body, query string and url params.
+Make use of `mock functions` inside `--data` (request body), `--qs` (query strings) and `--url` (url params).
 
 ### Flags
 
@@ -486,44 +511,39 @@ Would result in only the response body to be shown.
 > To be done.
 
 </br>
-</br>
 
 # Development Details
 
-## Installation
+### Installation
 
-### 1. Clone the repository
+Clone the repository.
 
 ```bash
 git clone git@github.com:lfsc09/k-test-n-stress.git
 cd k-test-n-stress
 ```
 
-### 2. Install dependencies
+Install dependencies.
 
 ```bash
 go mod download
 ```
 
-### 3. Configure git hooks
-
-> For auto-bump version on commits.
+Configure git hooks for auto-bump version on commits.
 
 ```bash
 make install-hooks
 ```
 
-</br>
+### Running
 
-## Running
-
-### Execute app
+Execute the app in terminal.
 
 ```bash
 go run . <command> <flags>
 ```
 
-### Run tests
+Run tests:
 
 ```bash
 go test ./...
@@ -533,20 +553,6 @@ Run with the race detector (for concurrent code):
 
 ```bash
 go test -race ./...
-```
-
-</br>
-
-## Maintaining
-
-### Updating dependencies
-
-```bash
-# Download updates for all dependencies to their latest minor/patch versions
-go get -u ./...
-
-# Tidy: remove unused deps and add any missing ones
-go mod tidy
 ```
 
 </br>
