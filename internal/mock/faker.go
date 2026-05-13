@@ -299,7 +299,7 @@ func (f Faker) Generate(fn string, args []string) (string, error) {
 	case "Finance.CreditCardNumber":
 		return f.kmock.Finance.CreditCardNumber(), nil
 
-	case "Finance.CreditCardCvv":
+	case "Finance.CreditCardCVV":
 		return f.kmock.Finance.CreditCardCVV(), nil
 
 	case "Finance.CreditCardExpirationDate":
