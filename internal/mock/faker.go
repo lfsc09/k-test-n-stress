@@ -513,7 +513,10 @@ func (f Faker) Generate(fn string, args []string) (string, error) {
 		if len(args) != 1 {
 			return "", fmt.Errorf("Regex.Generate: expected 1 argument, got %d", len(args))
 		}
-		pattern := args[0]
+		pattern, err := parseRegexArg(args[0])
+		if err != nil {
+			return "", fmt.Errorf("Regex.Generate: %v", err)
+		}
 		result, err := f.kmock.Regex.Generate(pattern)
 		if err != nil {
 			return "", fmt.Errorf("Regex.Generate: %v", err)
@@ -566,4 +569,17 @@ func argOr[T string | int | float64](args []string, index int, defaultVal T) T {
 		}
 	}
 	return defaultVal
+}
+
+// parseRegexArg is a helper function that validates and extracts the regex pattern from the provided argument string.
+// The argument must be wrapped with '/' characters (e.g., "/^[a-z]+$/").
+// If the argument is valid, it returns the extracted regex pattern; otherwise, it returns an error.
+func parseRegexArg(arg string) (string, error) {
+	if len(arg) < 2 {
+		return "", fmt.Errorf("invalid regex pattern '%s': must be wrapped with '/'", arg)
+	}
+	if arg[0] != '/' || arg[len(arg)-1] != '/' {
+		return "", fmt.Errorf("invalid regex pattern '%s': must start and end with '/'", arg)
+	}
+	return arg[1 : len(arg)-1], nil
 }
