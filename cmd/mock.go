@@ -26,10 +26,16 @@ Template data:
 
 * The data inside templates are interpreted either as literal blocks or dynamic blocks.
   Literal blocks are any values not wrapped in double curly braces (e.g. { "key": "thisIsALiteralBlock" }).
-	Dynamic blocks are any values wrapped in double curly braces (e.g. { "key": "{{ thisIsADynamicBlock }}" }). The content inside the double curly braces is parsed as a mock function with optional parameters, and executed to generate mock data.
-	Dynamic blocks can accept multiple mock function calls separated by pipe (|) to either:
-		- Overwrite the output of a mock function with another (e.g. {{ Person.Name | NULL }}, will generate a random name and then overwrite it with null)
-		- Pipe the output of a mock function as an input parameter to another (e.g. {{ Person.Name | CACHE_WRITE:{key} }}, will generate a random name and then write it to a cache)
+  Dynamic blocks are any values wrapped in double curly braces (e.g. { "key": "{{ thisIsADynamicBlock }}" }). The content inside the double curly braces is parsed as a mock function with optional parameters, and executed to generate mock data.
+  Dynamic blocks can accept multiple mock function calls separated by pipe (|) to either:
+    - Overwrite the output of a mock function with another (e.g. {{ Person.Name | OR_BLANK }}, will generate a random name and then overwrite it with a blank value)
+    - Pipe the output of a mock function as an input parameter to another (e.g. {{ Person.Name | CACHE_WRITE:{key} }}, will generate a random name and then write it to a cache)
+
+Function types:
+
+* There are two types of functions (mock functions) and (pipe functions) that can be used in a dynamic block.
+  (mock functions) are the ones that generate the mocked data. They are the most commonly used and are the ones listed with --list. Currently they will be in the format of Category.Function (2 parts divided by a dot), where each part has the first letter capitalized.
+  (pipe functions) are the ones that process or transform the output of other functions. They are used in combination with mock functions to modify or enhance the generated data. Currently they will be in the format of FUNCTION_NAME (all uppercase letters).
 
 Mock functions:
 
@@ -82,15 +88,15 @@ Parsing JSON templates (--parse-json or --parse-json-file):
 Parsing CSV templates (--parse-csv or --parse-csv-file):
 
 * The CSV template must be a single depth Json object, where each 'key: value' pair is interpreted as 'colname: "value"'.
-	The number of rows generated will be determined by the --generate flag (default 1).
+  The number of rows generated will be determined by the --generate flag (default 1).
 
-	e.g.:
-	{ "name": "{{ Person.Name }}", "age": "{{ Number.IntBetween:{18}:{65} }}", "email": "{{ Person.Email }}" }
+  e.g.:
+  { "name": "{{ Person.Name }}", "age": "{{ Number.IntBetween:{18}:{65} }}", "email": "{{ Person.Email }}" }
 
-	Will generate a CSV with columns "name", "age" and "email" with corresponding mock data.
+  Will generate a CSV with columns "name", "age" and "email" with corresponding mock data.
 
-	name,age,email
-	"Bill Smith",35,"bill.smith@example.com"
+  name,age,email
+  "Bill Smith",35,"bill.smith@example.com"
 
 Output routing:
 
@@ -106,10 +112,10 @@ Examples:
   ktns mock --parse-json '{ "name": "{{ Person.Name }}" }' --to-file "path/to/mydata.json"
   ktns mock --parse-json-file "path/to/employees.template.json" --generate 5 --to-stdout --to-file ""
   ktns mock --parse-json-file "path/to/employees.template.json" --to-file "path/to/mydata.json"
-	ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --generate 10 --to-stdout --to-file ""
-	ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --to-file "path/to/mydata.csv"
-	ktns mock --parse-csv-file "path/to/employees.template.csv" --generate 10 --to-stdout --to-file ""
-	ktns mock --parse-csv-file "path/to/employees.template.csv" --to-file "path/to/mydata.csv"
+  ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --generate 10 --to-stdout --to-file ""
+  ktns mock --parse-csv '{ "name": "{{ Person.Name }}" }' --to-file "path/to/mydata.csv"
+  ktns mock --parse-csv-file "path/to/employees.template.csv" --generate 10 --to-stdout --to-file ""
+  ktns mock --parse-csv-file "path/to/employees.template.csv" --to-file "path/to/mydata.csv"
 	`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Set up OS signal handling so Ctrl-C cancels in-flight work cleanly.
@@ -132,7 +138,21 @@ Examples:
 
 			if list {
 				faker := mock.NewFaker()
-				printTable(opts.Out, faker.DocsToTable())
+				mockTableRows, pipeTableRows := faker.DocsToTable()
+				mockTable := table{
+					cols: []*tableCol{
+						{size: 45, name: "MOCK FUNCTION"},
+						{size: 60, name: "DESCRIPTION"},
+					},
+				}
+				mockTable.print(opts.Out, mockTableRows, false)
+				pipeTable := table{
+					cols: []*tableCol{
+						{size: 45, name: "PIPE FUNCTION"},
+						{size: 60, name: "DESCRIPTION"},
+					},
+				}
+				pipeTable.print(opts.Out, pipeTableRows, true)
 				return nil
 			}
 
@@ -389,52 +409,62 @@ Examples:
 	return mockCmd
 }
 
+type tableCol struct {
+	size int
+	name string
+}
+
+type table struct {
+	cols []*tableCol
+}
+
 // printTable prints a formatted table with the given rows to the specified output writer.
-func printTable(out io.Writer, rows [][]string) {
-	colSizes := []int{45, 60}
-	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
-	fmt.Fprintf(out, "%s\n", tableLineHeader(colSizes))
-	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+func (t table) print(out io.Writer, rows [][]string, hasBottomDivider bool) {
+	fmt.Fprintf(out, "%s\n", t.divider())
+	fmt.Fprintf(out, "%s\n", t.header())
+	fmt.Fprintf(out, "%s\n", t.divider())
 	for _, row := range rows {
-		fmt.Fprintf(out, "%s\n", tableLineData(colSizes, row))
+		fmt.Fprintf(out, "%s\n", t.data(row))
 	}
-	fmt.Fprintf(out, "%s\n", tableLineDivider(colSizes))
+	if hasBottomDivider {
+		fmt.Fprintf(out, "%s\n", t.divider())
+	}
 }
 
-// tableLineDivider generates a string that represents a divider line for a table based on the provided column sizes.
-func tableLineDivider(colSizes []int) string {
+// divider generates a string that represents a divider line for a table based on the provided column sizes.
+func (t table) divider() string {
 	var line strings.Builder
-	for idx, size := range colSizes {
+	for idx, col := range t.cols {
 		if idx == 0 {
-			line.WriteString(strings.Repeat("-", size))
+			line.WriteString(strings.Repeat("-", col.size))
 		} else {
-			line.WriteString("+" + strings.Repeat("-", size))
+			line.WriteString("+" + strings.Repeat("-", col.size))
 		}
 	}
 	return line.String()
 }
 
-// tableLineHeader generates a string that represents the header line for a table based on the provided column sizes.
-func tableLineHeader(colSizes []int) string {
+// header generates a string that represents the header line for a table based on the provided column sizes.
+func (t table) header() string {
 	var line strings.Builder
-	for idx, size := range colSizes {
+	for idx, col := range t.cols {
 		if idx == 0 {
-			fmt.Fprintf(&line, "%-*s", size, "FUNCTION")
+			fmt.Fprintf(&line, "%-*s", col.size, col.name)
 		} else {
-			fmt.Fprintf(&line, "| %-*s", size, "DESCRIPTION")
+			fmt.Fprintf(&line, "| %-*s", col.size, col.name)
 		}
 	}
 	return line.String()
 }
 
-// tableLineData generates a string that represents a data line for a table based on the provided column sizes and data.
-func tableLineData(colSizes []int, data []string) string {
+// data generates a string that represents a data line for a table based on the provided column sizes and data.
+func (t table) data(row []string) string {
 	var line strings.Builder
-	for idx, size := range colSizes {
+	for idx, col := range t.cols {
 		if idx == 0 {
-			fmt.Fprintf(&line, "%-*s", size, data[idx])
+			fmt.Fprintf(&line, "%-*s", col.size, row[idx])
 		} else {
-			fmt.Fprintf(&line, "| %-*s", size, data[idx])
+			fmt.Fprintf(&line, "| %-*s", col.size, row[idx])
 		}
 	}
 	return line.String()

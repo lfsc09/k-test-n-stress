@@ -654,10 +654,11 @@ func (f Faker) Pipe(fn string, args []string, input string) (bool, string, error
 	}
 }
 
-// DocsToTable converts the runtime documentation of available mock functions into a table format (slice of string slices) where each inner slice contains the function signature and its description.
-func (f Faker) DocsToTable() [][]string {
+// DocsToTable returns two tables: one for the mock functions and another for the pipe functions, containing their signatures and descriptions.
+// For the mock functions, it retrieves the documentation from the kmock library and formats it into a table with the function signature and description.
+func (f Faker) DocsToTable() ([][]string, [][]string) {
 	docs := f.kmock.RuntimeDocs()
-	table := make([][]string, len(docs))
+	mockTable := make([][]string, len(docs))
 	for i, doc := range docs {
 		args := ""
 		for j, arg := range doc.Params {
@@ -666,9 +667,17 @@ func (f Faker) DocsToTable() [][]string {
 			}
 			args += fmt.Sprintf("{%s}", arg)
 		}
-		table[i] = []string{fmt.Sprintf("%s.%s%s", doc.Domain, doc.Method, args), doc.Description}
+		mockTable[i] = []string{fmt.Sprintf("%s.%s%s", doc.Domain, doc.Method, args), doc.Description}
 	}
-	return table
+
+	pipeTable := [][]string{
+		{"OR_BLANK:{probability}", "With the given probability, returns an empty string instead of the input value."},
+		{"SEQ_SET:{type}:{start}:{step}", "Initializes a sequence with the specified type (linear or exp), starting value, and step."},
+		{"SEQ_NEXT", "Returns the next value in the sequence initialized by SEQ_SET."},
+		{"CACHE_WRITE:{key}", "Writes the input value to a cache with the specified key."},
+		{"CACHE_READ:{key}", "Reads a value from the cache using the specified key and returns it as output."},
+	}
+	return mockTable, pipeTable
 }
 
 // argOr is a helper function that retrieves an argument from the args slice at the specified index and converts it to the desired type T (string, int, float64, or seqType).

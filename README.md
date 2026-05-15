@@ -73,9 +73,9 @@ ktns mock --parse-str 'Name: Person.Name'
 {
   // A literal value
   "key1": "literal value",
-  // A dynamic value
+  // A mock|pipe function (dynamic block)
   "key2": "{{ Lorem.Word }}",
-  // A fixed Array of (literal value, dynamic value, object)
+  // A fixed Array of (literal value, mock|pipe function (dynamic block), object)
   "key3": ["literal value", "{{ Lorem.Word }}", { "s1key1": "literal value", ... }],
   // An object
   "key4": {
@@ -84,7 +84,7 @@ ktns mock --parse-str 'Name: Person.Name'
   },
   // An Array Generation of literal values
   "key5[2]": "literal value",
-  // An Array Generation of dynamic values
+  // An Array Generation of mock|pipe function (dynamic block) values
   "key6[2]": "{{ Lorem.Word }}",
   // An Array Generation of object
   "key7[2]": {
@@ -243,24 +243,40 @@ Where:
 
 ### More Details
 
-#### Piping mock functions
+#### Function types
 
-In a single `dynamic block` you can pipe mock functions with `|` to either:
+There are two types of functions `mock functions` and `pipe functions` that can be used in a dynamic block.
 
-- Overwrite the output of a mock function with another;
-- Pipe the output of a mock function as an input parameter to another;
+`mock functions` are the ones that generate the mocked data. They are the most commonly used and are the ones listed with `--list`. Currently they will be in the format of `Category.Function` (2 parts divided by a dot), where each part has the first letter capitalized.
+
+`pipe functions` are the ones that process or transform the output of other functions. They are used in combination with mock functions to modify or enhance the generated data. Currently they will be in the format of `FUNCTION_NAME` (all uppercase letters).
+
+#### Piping functions
+
+In a single `dynamic block` you can pipe functions with `|` to either:
+
+- Overwrite the output of a function with another;
+- Pipe the output of a function as an input parameter to another;
+
+Usually the first function is used to generate a value, and the second function will use that value as input to process it in some way, or to overwrite it with a new value.
 
 ```json
-// In this case the NULL function will overwrite the person's name generate
-{ "name": "{{ Person.Name | NULL }}" }
+// In this case the OR_BLANK function will overwrite the person's name generated
+{ "name": "{{ Person.Name | OR_BLANK }}" }
 ```
 
 ```json
-// In this case the person's name is also used as input to CACHE_WRITE function
+// In this case a person's name is generated, used as input to CACHE_WRITE function and then returned as output of the whole block
 { "name": "{{ Person.Name | CACHE_WRITE:{key} }}" }
 ```
 
-#### Mock functions parameters
+It is possible though to pipe multiple mock functions together, but only the last one's value will be returned as output of the whole block.
+
+```json
+{ "name": "{{ Person.Name | Person.Phone }}" }
+```
+
+#### Mock|Pipe functions parameters
 
 Some of the mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
 
