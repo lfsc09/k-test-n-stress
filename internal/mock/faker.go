@@ -220,6 +220,15 @@ func (f Faker) Generate(fn string, args []string) (string, error) {
 	case "Company.CNPJLegacyValid":
 		return f.kmock.Company.CNPJLegacyValid(), nil
 
+	case "Company.CNPJLegacyInvalid":
+		return f.kmock.Company.CNPJLegacyInvalid(), nil
+
+	case "Company.CNPJAlphanumericValid":
+		return f.kmock.Company.CNPJAlphanumericValid(), nil
+
+	case "Company.CNPJAlphanumericInvalid":
+		return f.kmock.Company.CNPJAlphanumericInvalid(), nil
+
 	case "Company.IE":
 		return f.kmock.Company.IE(), nil
 
@@ -505,6 +514,9 @@ func (f Faker) Generate(fn string, args []string) (string, error) {
 
 	case "Person.CPFValid":
 		return f.kmock.Person.CPFValid(), nil
+
+	case "Person.CPFInvalid":
+		return f.kmock.Person.CPFInvalid(), nil
 
 	/*
 		REGEX

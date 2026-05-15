@@ -3,7 +3,7 @@ module github.com/lfsc09/k-test-n-stress
 go 1.26.1
 
 require (
-	github.com/lfsc09/kmock v1.7.0
+	github.com/lfsc09/kmock v1.9.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 )
