@@ -7,13 +7,63 @@ import (
 	"github.com/lfsc09/kmock"
 )
 
+type seqType string
+
+const (
+	SeqLinear      seqType = "linear"
+	SeqExponential seqType = "exp"
+)
+
+type pipeSeq struct {
+	seqType seqType
+	asFloat bool
+	start   float64
+	step    float64
+	curr    float64
+}
+
+// String returns the current value of the sequence as a string, formatted as an integer or a float based on the asFloat flag.
+func (p pipeSeq) String() string {
+	if p.asFloat {
+		return strconv.FormatFloat(p.curr, 'f', 6, 64)
+	}
+	return strconv.Itoa(int(p.curr))
+}
+
+// Next advances the sequence to the next value based on the sequence type (linear or exponential) and returns it as a string.
+func (p *pipeSeq) Next() string {
+	switch p.seqType {
+	case SeqLinear:
+		p.curr += p.step
+	case SeqExponential:
+		p.curr *= p.step
+	}
+	return p.String()
+}
+
+type fakerMemory struct {
+	pipeSeq   *pipeSeq
+	pipeCache map[string]string
+}
+
 type Faker struct {
-	kmock *kmock.KMock
+	kmock  *kmock.KMock
+	memory *fakerMemory
 }
 
 func NewFaker() *Faker {
 	return &Faker{
 		kmock: kmock.New(),
+		memory: &fakerMemory{
+			pipeSeq: &pipeSeq{
+				seqType: SeqLinear,
+				asFloat: false,
+				start:   0,
+				step:    1,
+				curr:    0,
+			},
+			pipeCache: make(map[string]string),
+		},
 	}
 }
 
@@ -540,6 +590,70 @@ func (f Faker) Generate(fn string, args []string) (string, error) {
 	}
 }
 
+// Pipe executes a pipe function with the given name, arguments and input value.
+// It returns a boolean indicating whether the function produced an output value that should be piped to the next function, the output value itself (if any), and an error if the function name is unknown or if there are issues with the arguments.
+func (f Faker) Pipe(fn string, args []string, input string) (bool, string, error) {
+	switch fn {
+	case "OR_BLANK":
+		if len(args) > 1 {
+			return false, "", fmt.Errorf("OR_BLANK: expected 0 or 1 argument, got %d", len(args))
+		}
+		probability := argOr(args, 0, 0.5)
+		if probability < 0 || probability > 1 {
+			return false, "", fmt.Errorf("OR_BLANK: probability must be between 0 and 1, got %f", probability)
+		}
+		if f.kmock.Boolean.RandomWithProbability(probability) {
+			return true, "", nil
+		}
+		return false, "", nil
+
+	case "SEQ_SET":
+		if len(args) > 3 {
+			return false, "", fmt.Errorf("SEQ_SET: expected 0 to 3 arguments, got %d", len(args))
+		}
+		seqTypeParam := argOr(args, 0, SeqLinear)
+		startParam, startIsFloat := seqArgOr(args, 1, 0.0)
+		stepParam, stepIsFloat := seqArgOr(args, 2, 1.0)
+		if seqTypeParam != SeqLinear && seqTypeParam != SeqExponential {
+			return false, "", fmt.Errorf("SEQ_SET: invalid sequence type '%s', expected 'linear' or 'exp'", seqTypeParam)
+		}
+		f.memory.pipeSeq.seqType = seqTypeParam
+		f.memory.pipeSeq.asFloat = startIsFloat || stepIsFloat
+		f.memory.pipeSeq.start = startParam
+		f.memory.pipeSeq.step = stepParam
+		f.memory.pipeSeq.curr = startParam
+		return true, f.memory.pipeSeq.String(), nil
+
+	case "SEQ_NEXT":
+		if len(args) > 0 {
+			return false, "", fmt.Errorf("SEQ_NEXT: expected no arguments, got %d", len(args))
+		}
+		return true, f.memory.pipeSeq.Next(), nil
+
+	case "CACHE_WRITE":
+		if len(args) != 1 {
+			return false, "", fmt.Errorf("CACHE_WRITE: expected 1 argument, got %d", len(args))
+		}
+		key := args[0]
+		f.memory.pipeCache[key] = input
+		return false, "", nil
+
+	case "CACHE_READ":
+		if len(args) != 1 {
+			return false, "", fmt.Errorf("CACHE_READ: expected 1 argument, got %d", len(args))
+		}
+		key := args[0]
+		value, exists := f.memory.pipeCache[key]
+		if !exists {
+			return false, "", fmt.Errorf("CACHE_READ: no value found in cache for key '%s'", key)
+		}
+		return true, value, nil
+
+	default:
+		return false, "", fmt.Errorf("unknown pipe function '%s'", fn)
+	}
+}
+
 // DocsToTable converts the runtime documentation of available mock functions into a table format (slice of string slices) where each inner slice contains the function signature and its description.
 func (f Faker) DocsToTable() [][]string {
 	docs := f.kmock.RuntimeDocs()
@@ -557,9 +671,9 @@ func (f Faker) DocsToTable() [][]string {
 	return table
 }
 
-// argOr is a helper function that retrieves an argument from the args slice at the specified index and converts it to the desired type T (string, int, or float64).
+// argOr is a helper function that retrieves an argument from the args slice at the specified index and converts it to the desired type T (string, int, float64, or seqType).
 // If the argument is not present or cannot be converted, it returns the provided default value.
-func argOr[T string | int | float64](args []string, index int, defaultVal T) T {
+func argOr[T string | int | float64 | seqType](args []string, index int, defaultVal T) T {
 	switch any(defaultVal).(type) {
 	case string:
 		if index < len(args) && args[index] != "" {
@@ -579,6 +693,10 @@ func argOr[T string | int | float64](args []string, index int, defaultVal T) T {
 				return any(parsed).(T)
 			}
 		}
+	case seqType:
+		if index < len(args) && args[index] != "" {
+			return any(seqType(args[index])).(T)
+		}
 	}
 	return defaultVal
 }
@@ -594,4 +712,19 @@ func parseRegexArg(arg string) (string, error) {
 		return "", fmt.Errorf("invalid regex pattern '%s': must start and end with '/'", arg)
 	}
 	return arg[1 : len(arg)-1], nil
+}
+
+// seqArgOr is a helper function that retrieves an argument from the args slice at the specified index.
+// It checks if the argument is an integer or a float and returns the value as a float64 along with a boolean indicating if it was a float or not.
+// If the argument is not present or cannot be converted, it returns the provided default value and false.
+func seqArgOr(args []string, index int, defaultVal float64) (float64, bool) {
+	if index < len(args) && args[index] != "" {
+		if intVal, err := strconv.Atoi(args[index]); err == nil {
+			return float64(intVal), false
+		}
+		if floatVal, err := strconv.ParseFloat(args[index], 64); err == nil {
+			return floatVal, true
+		}
+	}
+	return defaultVal, false
 }

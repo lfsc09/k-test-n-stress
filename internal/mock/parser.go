@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // splitBlocksRegex matches all occurrences of {{ … }} in a string.
@@ -16,7 +17,15 @@ const (
 	DynamicBlock
 )
 
+type FunctionType int
+
+const (
+	MockFunction FunctionType = iota + 1
+	PipeFunction
+)
+
 type MockCall struct {
+	FunctionType FunctionType
 	FunctionName string
 	Params       []string
 }
@@ -96,30 +105,40 @@ func CompileMockBlocks(rawValue string) ([]*MockBlock, error) {
 // ExecuteMockBlocks takes a slice of MockBlock and executes the function calls in dynamic blocks using the provided faker,
 // and returns the final string result with all dynamic blocks replaced by their executed values.
 func ExecuteMockBlocks(blocks []*MockBlock, faker *Faker) (string, error) {
-	var resultBuilder strings.Builder
+	var executionResult strings.Builder
 
 	for _, block := range blocks {
 		switch block.Type {
 		case LiteralBlock:
-			resultBuilder.WriteString(block.RawValue)
+			executionResult.WriteString(block.RawValue)
 		case DynamicBlock:
-			var blockResultBuilder strings.Builder
+			var pipedValue string
 
 			// Each function call executes sequentially, but their values overwrite each other and only the result of the last function call is returned as the value of the block
 			for _, call := range block.Calls {
-				blockResultBuilder.Reset()
-				mockedValue, err := faker.Generate(call.FunctionName, call.Params)
-				if err != nil {
-					return "", err
+				switch call.FunctionType {
+				case MockFunction:
+					mockedValue, err := faker.Generate(call.FunctionName, call.Params)
+					if err != nil {
+						return "", err
+					}
+					pipedValue = mockedValue
+				case PipeFunction:
+					hasValue, value, err := faker.Pipe(call.FunctionName, call.Params, pipedValue)
+					if err != nil {
+						return "", err
+					}
+					if hasValue {
+						pipedValue = value
+					}
 				}
-				blockResultBuilder.WriteString(mockedValue)
 			}
 
-			resultBuilder.WriteString(blockResultBuilder.String())
+			executionResult.WriteString(pipedValue)
 		}
 	}
 
-	return resultBuilder.String(), nil
+	return executionResult.String(), nil
 }
 
 // validateDynamicBlockSyntax checks the syntax of dynamic blocks in the rawValue string.
@@ -197,13 +216,42 @@ func parseDynamicBlock(rawValue string) ([]*MockCall, error) {
 		if funcName == "" {
 			return nil, fmt.Errorf("'|' separator must always separate two function calls")
 		}
+		funcType, err := whichFunctionType(funcName)
+		if err != nil {
+			return nil, err
+		}
 		blockCalls = append(blockCalls, &MockCall{
+			FunctionType: funcType,
 			FunctionName: funcName,
 			Params:       params,
 		})
 	}
 
 	return blockCalls, nil
+}
+
+// whichFunctionType determines whether a function name corresponds to a MockFunction or a PipeFunction based on its syntax.
+func whichFunctionType(funcName string) (FunctionType, error) {
+	if funcName == "" {
+		return 0, fmt.Errorf("function name is empty")
+	}
+	parts := strings.Split(funcName, ".")
+	// Pipe functions are all snake_case, uppercase and contain no dots
+	if len(parts) == 1 && funcName == strings.ToUpper(funcName) {
+		return PipeFunction, nil
+	}
+	// Mock functions have one dot separating the category and function name, and each part starts with an uppercase letter
+	if len(parts) == 2 {
+		for _, part := range parts {
+			for i, r := range part {
+				if i == 0 && !unicode.IsUpper(r) || i > 0 && unicode.IsUpper(r) {
+					return 0, fmt.Errorf("invalid mock function name: %s", funcName)
+				}
+			}
+		}
+		return MockFunction, nil
+	}
+	return 0, fmt.Errorf("unable to determine function's type: %s", funcName)
 }
 
 // parseFunctionAndParams parses "funcName:{arg1}:{arg2}:{argN}" and returns the function name and parameter slice.
