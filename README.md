@@ -1,303 +1,482 @@
-![Go Badge](https://img.shields.io/badge/Go-1.24.1-00ADD8.svg?style=for-the-badge&logo=Go&logoColor=white)
+![Go Badge](https://img.shields.io/badge/Go-1.26-00ADD8.svg?style=for-the-badge&logo=Go&logoColor=white)
 
 # The project
 
-k-test-n-stress is a simple tool to facilate:
+K-test-n-stress is a simple Go cli tool to:
 
-1. `[mock]` Generation of fake data.
-2. `[request]` Running http tests on endpoints.
-3. `[stress]` Generating stress tests on endpoints.
-4. `[feed]` Feed (Seed) databases with fake data and `table` templates. ???
+1. [`[mock]`](#mock) Generate random, structurally valid fake data on demand.
+2. [`[request]`](#request) Generate http requests to URLs.
+3. `[stress]` Stress test URLs.
 
-Run it like:
-
-All in the command line with flags.
+### Basic usage
 
 ```bash
 ktns <command> <flags>
 ```
 
-</br>
+### Advantages
+
+### Disadvantages
+
 </br>
 
-## Faker (`mock`) command
+# Commands
+
+## `mock`
 
 ```bash
 ktns mock <flags>
 ```
 
-Mock function must be wrapped in `{{ Person.name }}`, or values passed will be interpreted as raw values.
+### How it works
+
+A template, which is a Json object, is given as input to be parsed to generate either JSON or CSV output. The template's object values are compiled into `literal` and `dynamic` blocks that will be processed to generate the mock data.
+
+`dynamic blocks` is where you specify the `mock functions` that will generate mocked data depending on the desired type of data. These dynamic blocks must be wrapped in (double curly braces) `{{ }}` (`{{ Person.Name }}`, which will dynamically generate a person's name).
+
+Anything outside `{{ }}` is treated as literal values and is just reflected to the output as is.
+
+```bash
+ktns mock --parse-str 'Name: {{ Person.Name }}'
+
+# Name: John Smith
+```
+
+```bash
+ktns mock --parse-str 'Name: Person.Name'
+
+# Name: Person.Name
+```
 
 ### Flags
 
-- `--list`: If set, it will list all available mock functions.
-- `--parse-str`: Pass a string to be parsed. The mock data will be generated based on the provided string.
-- `--parse-json`: Pass a JSON object as a string. The mock data will be generated based on the provided object.
-- `--parse-files`: Pass a path, directory, or glob pattern to find template files (`.template.json`). The mock data will be generated based on the found files.
-- `--preserve-folder-structure`: If set, the folder structure of the input files will be preserved in the output files.
-- `--generate`: Pass the desired amount of root objects that will be generated (only available for `--parse-json`). (More info [here](#generating-multiple-values))
+- `--list`: To list all available mock functions.
+- `--parse-str`: A string input to be parsed.
+- `--parse-json`: A JSON template object as a string to be parsed.
+- `--parse-json-file`: A path to a single `.template.json` JSON template file (the filename **must** end with `.template.json`) to be parsed.
+- `--parse-csv`: A CSV template as a string to be parsed.
+- `--parse-csv-file`: A path to a single `.template.csv` CSV template file (the filename **must** end with `.template.csv`) to be parsed.
+- `--generate`: The desired amount of root objects to be generated (**not** available for `--parse-str`). (More info [here](#generating-multiple-values))
+- `--to-stdout`: To output the result to STDOUT.
+- `--to-file <filename|"">`: To output the result to a file. If no filename is given:
+  - Defaults to `output.<json|csv>` in the current working directory (for `--parse-json` or `--parse-csv`);
+  - Or to the template name without `.template` in the same directory as the template file (for `--parse-json-file` or `--parse-csv-file`);
+- `--debug`: To output debug information to STDERR (elapsed time, progress, memory consumption, output size).
 
-</br>
+> Either (`--to-stdout` and/or `--to-file`) **must** be provided if (`--parse-json` or `--parse-json-file` or `--parse-csv` or `--parse-csv-file`) is used.
 
-### Examples
+### Input Template
 
-#### Example (`--parse-str`)
-
-```bash
-ktns mock --parse-str 'Hello my name is {{ Person.name }}, I am {{ Number.number::1:100 }} years old.'
-```
-
-#### Example (`--parse-json`)
-
-```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}'
-```
-
-#### Example (`--parse-files`)
+#### JSON example
 
 ```json
 {
-  "company": "{{ Company.name }}",
+  // A literal value
+  "key1": "literal value",
+  // A mock|pipe function (dynamic block)
+  "key2": "{{ Lorem.Word }}",
+  // A fixed Array of (literal value, mock|pipe function (dynamic block), object)
+  "key3": ["literal value", "{{ Lorem.Word }}", { "s1key1": "literal value", ... }],
+  // An object
+  "key4": {
+    "s2key1": "literal word",
+    ...
+  },
+  // An Array Generation of literal values
+  "key5[2]": "literal value",
+  // An Array Generation of mock|pipe function (dynamic block) values
+  "key6[2]": "{{ Lorem.Word }}",
+  // An Array Generation of object
+  "key7[2]": {
+    "s3key1": "literal word",
+    ...
+  }
+}
+```
+
+#### CSV example
+
+```json
+{
+  "col1": "literal value",
+  "col2": "{{ Lorem.Word }}"
+}
+```
+
+### Command details
+
+#### `--list`
+
+Get a list of all the available `mock functions`.
+
+```bash
+ktns mock --list
+```
+
+#### `--parse-str`
+
+```bash
+ktns mock --parse-str 'Hello my name is {{ Person.Name }}, I am {{ Number.IntBetween:{1}:{100} }} years old.'
+
+# Hello my name is John Smith, I am 40 years old.
+```
+
+#### `--parse-json`
+
+Output examples:
+
+To **STDOUT**
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.Name }}", "employee": { "name": "{{ Person.Name }}" }}' --to-stdout
+
+# { "company": "Delvalle", "employee": { "name": "Josh Smith" }}
+```
+
+To **JSON file**
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.Name }}", "employee": { "name": "{{ Person.Name }}" }}' --to-file ""
+```
+
+```json
+// output.json
+{ "company": "Delvalle", "employee": { "name": "Josh Smith" }}
+```
+
+> If no output filename was given the program default to `output.json` in the current working directory.
+
+To a specific **JSON file**
+
+```bash
+ktns mock --parse-json '{ "company": "{{ Company.Name }}" }' --to-file path/to/mydata.json
+```
+
+```json
+// path/to/mydata.json
+{ "company": "Delvalle", "employee": { "name": "Josh Smith" }}
+```
+
+#### `--parse-json-file`
+
+> The template file **must** end as `.template.json`.
+
+```json
+// employee.template.json
+{
+  "company": "{{ Company.Name }}",
   "employee": {
-    "name": "{{ Person.fullName }}",
+    "name": "{{ Person.Name }}",
     "age": "39"
   }
 }
 ```
 
+Output examples:
+
+To **STDOUT**
+
 ```bash
-  ktns mock --parse-files example.template.json
-  ktns mock --parse-files "*.template.json"
-  ktns mock --parse-files "test/templates/*.template.json"
-  ktns mock --parse-files "test/templates" --preserve-folder-structure
+ktns mock --parse-json-file employee.template.json --to-stdout
+
+# { "company": "Delvalle", "employee": { "name": "Josh Smith", "age": 39 }}
 ```
 
-</br>
+To **JSON file**
 
-### Details
-
-#### Limitations of the template objects
-
-The `value` of an object key may be:
-- A `string` value with the **Faker function name *(between double brackets)***.
-- An `object`, detailing an inner object.
-- An `array` of either `string` OR `object`.
-
-#### Preservation of folder structure
-
-When using `--parse-files`, you can may have a folder structure, for instance, like this:
-
+```bash
+ktns mock --parse-json-file employee.template.json --to-file ""
 ```
-├── company.template.json
-└── assets/
-  ├── employee[10].template.json
-  └── building[2].template.json
-```
-
-If you wish to generate the fake data and preserve this structure, use the flag `--preserve-folder-structure` to have a result like:
-
-```
-└── out/
-  ├── company.json
-  └── assets/
-    ├── employee[10].json
-    └── building[2].json
-```
-
-Otherwise your result files will be flatten:
-
-```
-└── out/
-  ├── company.json
-  ├── employee[10].json
-  └── building[2].json
-```
-
-#### Mock functions optional parameters
-
-Some of the mock functions accept additional parameters, and they are informed by delimiting with `:`.
-
-e.g.: `{{ functionName::arg1:arg2:... }}`
 
 ```json
-{
-  "words": "Loreum.words:5"
-}
+// employee.json  (created alongside the template file)
+{ "company": "Delvalle", "employee": { "name": "Josh Smith", "age": "39" }}
 ```
+
+> If no output filename was given the program will use the template's filename (`employee.json`) in the same directory.
+
+To a specific **JSON file**
+
+```bash
+ktns mock --parse-json-file employee.template.json --to-file path/to/myout.json
+```
+
+```json
+// path/to/myout.json
+{ "company": "Delvalle", "employee": { "name": "Josh Smith", "age": "39" }}
+```
+
+#### `--generate`
+
+```bash
+ktns mock --parse-json-file employee.template.json --generate 3 --to-stdout
+```
+
+```json
+[
+  { "company": "Delvalle", "employee": { "name": "Josh Smith", "age": "39" }},
+  { "company": "Infomatics", "employee": { "name": "Jane Doe", "age": "39" }},
+  { "company": "Braindance", "employee": { "name": "Sam Lee", "age": "39" }}
+]
+```
+
+#### `--debug`
+
+```bash
+ktns mock --parse-json-file employee.template.json --generate 100000 --to-file "" --debug
+
+# [debug] Elapsed: 38.70s | Progress: 22Mi / 22Mi (100.0%) | Mem: 6.91MB ⌈7.70MB⌉ [27.21MB] | Output Size: ~484.79MB
+```
+
+Where:
+
+- `Elapsed`: Is the total time elapsed since the start.
+- `Progress`: `v1` / `v2` (`perc`)
+  - `v1`: Is the current count of generated elements. (Including literal values)
+  - `v2`: Is the total count of elements to be generated. (dynamic + literal)
+  - `perc`: Is the percentage done.
+- `Mem`: `v1` ⌈`v2`⌉ [`v3`]
+  - `v1`: Is the current allocated heap size from `runtime.MemStat.Alloc`.
+  - `v2`: Is the highest value of `runtime.MemStat.Alloc` reached.
+  - `v3`: Is the system reserved amount from `runtime.MemStat.System`.
+- `Output Size`: Is the total amount of bytes written to the buffer. (Approximate size of the result object)
+
+### More Details
+
+#### Function types
+
+There are two types of functions `mock functions` and `pipe functions` that can be used in a dynamic block.
+
+`mock functions` are the ones that generate the mocked data. They are the most commonly used and are the ones listed with `--list`. Currently they will be in the format of `Category.Function` (2 parts divided by a dot), where each part has the first letter capitalized.
+
+`pipe functions` are the ones that process or transform the output of other functions. They are used in combination with mock functions to modify or enhance the generated data. Currently they will be in the format of `FUNCTION_NAME` (all uppercase letters).
+
+#### Piping functions
+
+In a single `dynamic block` you can pipe functions with `|` to either:
+
+- Overwrite the output of a function with another;
+- Pipe the output of a function as an input parameter to another;
+
+Usually the first function is used to generate a value, and the second function will use that value as input to process it in some way, or to overwrite it with a new value.
+
+```json
+// In this case the OR_BLANK function will overwrite the person's name generated
+{ "name": "{{ Person.Name | OR_BLANK }}" }
+```
+
+```json
+// In this case a person's name is generated, used as input to CACHE_WRITE function and then returned as output of the whole block
+{ "name": "{{ Person.Name | CACHE_WRITE:{key} }}" }
+```
+
+It is possible though to pipe multiple mock functions together, but only the last one's value will be returned as output of the whole block.
+
+```json
+{ "name": "{{ Person.Name | Person.Phone }}" }
+```
+
+#### Mock|Pipe functions parameters
+
+Some of the mock functions accept additional parameters. Each value parameter must be wrapped in curly braces (`{value}`) and separated by a colon (`:`).
+
+```txt
+{{ functionName:{arg1}:{arg2}:{argN} }}
+```
+
+```json
+{ "words": "Loreum.Sentence:{5}" }
+```
+
+It is possible to use blank parameters (without value) to assume the **default** value, by leaving blank after the colon `fn:` or a curly brace with nothing inside `fn:{}`.
 
 When working with multiple parameters, you may leave them blank if not used. _(They will assume default values)_
 
 ```json
-// Number.number expects 3 parameters (<decimal>:<min>:<max>)
-// In this case <decimal> is left blank, and will use default values.
-{
-  "age": "Number.number::18:50"
-}
-```
+// e.g.: `Number.FloatBetween` expects 3 parameters (<decimal>:<min>:<max>)
+// In this case <decimal> is left blank, and will use its default value.
+{ "age": "Number.FloatBetween::{18}:{50}" }
 
-#### List of mock functions
-
-Get a list of all the available Mock functions.
-
-```bash
-ktns mock --list
+// Or
+{ "age": "Number.FloatBetween:{}:{18}:{50}" }
 ```
 
 #### Generating multiple values
 
 ##### Root objects
 
-Generating muliple root objects can be done with the flag `--generate <number>` if using `--parse-json`.
+Use the flag `--generate <number>` to generate:
+
+- Multiple **root objects** when working with JSON;
+- Multiple **lines** when working with CSV;
 
 ```bash
-ktns mock --parse-json '{ "company": "{{ Company.name }}", "employee": { "name": "{{ Person.fullName }}" }}' --generate 10
+ktns mock --parse-json '{ "company": "{{ Company.name }}" }' --generate 5 --to-stdout
 ```
-
-When using `--parse-files`, specify the desired number of root objects in the template file's name, between brackets.
-
-A template file named `employees[5].template.json` bellow:
-
-```json
-{
-  "name": "{{ Person.name }}"
-}
-```
-
-Will produce a `employees[5].json` of results like:
 
 ```json
 [
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
-  {
-    "name": "..."
-  },
+  { "company": "Delvale" },
+  { "company": "Infomatics" },
+  { "company": "Braindance" },
+  { "company": "Colleative" },
+  { "company": "Jimbo" },
 ]
 ```
 
-##### Inner objects
+```bash
+ktns mock --parse-csv 'Company:::"{{ Company.Name }}"' --generate 5 --to-stdout
+```
 
-For inner objects, also pass the desired number between brackets in the object's `key`.
+```csv
+Company
+Delvale
+Infomatics
+Braindance
+Colleative
+Jimbo
+```
+
+##### Inner keys
+
+When working with JSON, to generate arrays of data, pass the desired number between brackets in the object's `key`.
 
 ```json
 {
-  "phones[3]": "{{ Person.phoneNumber }}",  // Will generate an array of 3 values
-  "employees[2]": {                         // Will generate an array of employees with 5 objects
-    "name": "{{ Person.name }}"
+  "phones[3]": "{{ Person.Phone }}",  // Will generate an array of 3 values
+  "employees[2]": {                   // Will generate an array of employees with 2 objects
+    "name": "{{ Person.Name }}"
   }
 }
 ```
-
-Will produce:
 
 ```json
 {
   "phones": ["...", "...", "..."],
   "employees": [
-    {
-      "name": "..."
-    },
-    {
-      "name": "..."
-    }
+    { "name": "..." },
+    { "name": "..." }
   ]
 }
 ```
 
-</br>
+#### Limitations of the json values
+
+As described in the JSON template example [here](#json-example), the `value` of a json object key may either:
+
+A `literal block`.
+
+```json
+{ "name": "Some literal value" }
+```
+
+A `dynamic block` with the **mock function name *(between double curly braces)***. 
+
+```json
+{ "name": "{{ Person.Name }}" }
+```
+
+An `object`, detailing an inner object.
+
+```json
+{ "employee": { ... }}
+```
+
+A fixed `array` of (`literal block`, `dynamic block`,  `object`).
+
+```json
+{ "names": ["Some name 1", "{{ Person.Name }}", { ... }]}
+```
+
 </br>
 
-## Http (`request`) command
+## `request`
 
 ```bash
 ktns request <flags>
 ```
 
-> ***Data can be mocked currently only in `--data`, `--qs` and `--url` flags.**
+### How it works
+
+Make use of `mock functions` inside `--data` (request body), `--qs` (query strings) and `--url` (url params).
 
 ### Flags
 
-- `--method`: The Http method (`GET` | `POST` | `PUT` | `DELETE`).
-- `--https`: If set, force https. _(If not stated, it will use the `url` protocol)_
-- `--url`: The request url with added Url params. _(e.g. `localhost:3000`, `localhost:8000/api/users`, `api.com/user/{{UUID.uuidv4}}`)_
-- `--header`: Multiple `string` values to be set as headers for the requests.
-- `--data`: A `string` json object defining data to be used at the request body.
-- `--qs`: Multiple `string` values defining query string values to be used at the request.
+- `--method`: Define the request **method** (`GET` | `POST` | `PUT` | `PATCH` | `DELETE`).
+- `--url`: The request **URL** with added **URL params**. _(e.g. `http://localhost:3000`, `localhost:8000/api/users`, `api.com/user/{{UUID.uuidv4}}`)_
+- `--https`: A Flag to overwrite the `url` protocol to HTTPS. _(If not set, it will use whichever the `url` protocol is)_
+- `--header`: A `string` `<key>: <value>` pair to be used as header in the request. *(Multiple flags can be used)*
+- `--data`: A `Json string format` defining data to be used in the request body.
+- `--qs`: A `string` `<key>=<value>` pair to be used as query string in the request. *(Multiple flags can be used)*
 - `--response-accessor`: A `string` value to specify how the response should be accessed, with the idea of returning a more specific segment of the response. _(If unable to access, it returns the whole response)_
-- `--with-metrics`: If set, show metrics of the request on the response.
-- `--only-response-body`: If set, will return only the response's body.
-
-</br>
+- `--with-metrics`: A Flag to add metrics of the request in the response.
+- `--only-response-body`: A Flag to force the return to only show the response's body.
 
 ### Examples
 
 #### Simple examples
 
 ```bash
-ktns request --method GET --url https://some-api.com/object
-ktns request --method POST --url https://some-api.com/object/new --data '{ "name": "A new object" }'
-ktns request --method PUT --url https://some-api.com/object/<object-id> --data '{ "name": "A changed object" }'
-ktns request --method DELETE --url https://some-api.com/object/<object-id>
+ktns request --method GET --url http://localhost:3000/endpoint
 ```
-
-#### Mocking request data
 
 ```bash
-ktns request
-  --medhod POST
-  --url https://some-api.com/person/new
-  --data '{ "name": "{{ Person.name }}", "phones[3]": "{{ Person.phoneNumber }}" }'
+ktns request --method GET --url https://some-api.com/endpoint
 ```
 
-#### Mocking query string data
+```bash
+# The same as the previous, but forcing HTTPS with the flag, instead of informing it in the URL.
+# If the flag was not used, HTTP protocol would be used by default
+ktns request --method GET --https --url some-api.com/endpoint
+```
+
+```bash
+ktns request --method GET --url http://localhost:3000/endpoint -qs 'q=Josh'
+```
+
+```bash
+ktns request --method POST --url https://some-api.com/endpoint --data '{ "name": "John Smith" }'
+```
+
+```bash
+ktns request --method DELETE --url https://some-api.com/endpoint/20313189-596e-4a65-a706-45a1531ea317
+```
+
+#### Mocking data
+
+Query Strings
 
 ```bash
 ktns request
   --medhod GET
   --url https://some-api.com/person
-  --qs 'ageMin={{ Number.number:0:1:10 }}'
-  --qs 'ageMax={{ Number.number:0:50:55 }}'
+  --qs 'ageMin={{ Number.number:{0}:{1}:{10} }}'
+  --qs 'ageMax={{ Number.number:{0}:{50}:{55} }}'
 ```
 
-#### Mocking url param data
+Request Body
 
 ```bash
 ktns request
-  --medhod GET
-  --url https://some-api.com/person/{{ UUID.uuidv4 }}
+  --medhod POST
+  --url https://some-api.com/endpoint
+  --data '{ "name": "{{ Person.name }}", "phones[3]": "{{ Person.phoneNumber }}" }'
 ```
 
-#### Forcing HTTPS
-
-Forcing it, will produce `https://localhost:8000/person`.
+URL Params
 
 ```bash
-ktns request
-  --medhod GET
-  --url localhost:8000/person
-  --https
+ktns request --method DELETE --url https://some-api.com/endpoint/{{ UUID.uuidv4 }}
 ```
 
-#### Adding authentication header
+#### Adding authorization header
 
 ```bash
 ktns request
   --medhod GET
   --url https://some-api/person
-  --header "Authentication: Bearer <token>"
+  --header "Authorization: Bearer fb80ea0..."
 ```
-
-</br>
 
 ### Response
 
@@ -321,6 +500,8 @@ Body:
 
 #### Adding metrics with `--with-metrics`
 
+Would include calculated metrics right bellow `Status`.
+
 ```bash
 Status: 200 OK
 Metrics:
@@ -335,6 +516,8 @@ Body:
 
 #### Get only body result `--only-response-body`
 
+Would result in only the response body to be shown.
+
 ```bash
 { ... }
 ```
@@ -344,24 +527,46 @@ Body:
 > To be done.
 
 </br>
-</br>
 
-# Development
+# Development Details
 
-The `Cobra` commands are in `/cmd` along with its tests.
+### Installation
 
-The `/mocker` folder holds the mocker object that currently only uses [`github.com/jaswdr/faker/v2`](https://github.com/jaswdr/faker) for most of the mock functions. Additional function were added manually.
-
-### Execute app
+Clone the repository.
 
 ```bash
-go run . <subparam> [flags]
+git clone git@github.com:lfsc09/k-test-n-stress.git
+cd k-test-n-stress
 ```
 
-### Run tests
+Install dependencies.
+
+```bash
+go mod download
+```
+
+Configure git hooks for auto-bump version on commits.
+
+```bash
+make install-hooks
+```
+
+### Running
+
+Execute the app in terminal.
+
+```bash
+go run . <command> <flags>
+```
+
+Run tests:
 
 ```bash
 go test ./...
 ```
 
+Run with the race detector (for concurrent code):
 
+```bash
+go test -race ./...
+```

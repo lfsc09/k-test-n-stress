@@ -1,12 +1,19 @@
-package cmd
+package cmd_test
 
 import (
+	"bytes"
+	"os"
+	"regexp"
 	"testing"
 
-	"github.com/lfsc09/k-test-n-stress/mocker"
+	"github.com/lfsc09/k-test-n-stress/cmd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
+
+const tempDir = ".testdata"
+const tempInputFilesDir = tempDir + "/input"
+const tempOutputFilesDir = tempDir + "/output"
 
 type MockCmdTestSuite struct {
 	suite.Suite
@@ -16,535 +23,320 @@ func TestMockCmdTestSuite(t *testing.T) {
 	suite.Run(t, new(MockCmdTestSuite))
 }
 
-func (suite *MockCmdTestSuite) TestExtractMockMethod_ValidInputs() {
-	tests := []struct {
-		testName         string
-		input            string
-		expectedFuncName string
-		expectedParams   []string
-	}{
-		{
-			testName:         "empty string",
-			input:            "",
-			expectedFuncName: "",
-			expectedParams:   nil,
-		},
-		{
-			testName:         "simple mock function",
-			input:            "Address.city",
-			expectedFuncName: "Address.city",
-			expectedParams:   []string{},
-		},
-		{
-			testName:         "mock function with params",
-			input:            "Boolean.booleanWithChance:10",
-			expectedFuncName: "Boolean.booleanWithChance",
-			expectedParams:   []string{"10"},
-		},
-		{
-			testName:         "mock function with multiple params",
-			input:            "Function.with:multiple:params",
-			expectedFuncName: "Function.with",
-			expectedParams:   []string{"multiple", "params"},
-		},
-		{
-			testName:         "regex mock function with empty regex",
-			input:            "Regex.regex://",
-			expectedFuncName: "Regex.regex",
-			expectedParams:   []string{"//"},
-		},
-		{
-			testName:         "regular regex mock function",
-			input:            "Regex.regex:/[a-z0-9]{1,64}/",
-			expectedFuncName: "Regex.regex",
-			expectedParams:   []string{"/[a-z0-9]{1,64}/"},
-		},
-		{
-			testName:         "regex mock function with params",
-			input:            "Regex.regex:/[a-z0-9]{1,64}/:param2",
-			expectedFuncName: "Regex.regex",
-			expectedParams:   []string{"/[a-z0-9]{1,64}/", "param2"},
-		},
-	}
-
-	for _, tt := range tests {
-		funcName, params := extractMockMethod(tt.input)
-		assert.Equal(suite.T(), tt.expectedFuncName, funcName, "Test case '%s' failed", tt.testName)
-		assert.Equal(suite.T(), tt.expectedParams, params, "Test case '%s' failed", tt.testName)
-	}
+func (suite *MockCmdTestSuite) SetupSuite() {
+	// Create temp directories for input and output files
+	err := os.MkdirAll(tempInputFilesDir, os.ModePerm)
+	assert.NoError(suite.T(), err, "Failed to create temp input files directory")
+	err = os.MkdirAll(tempOutputFilesDir, os.ModePerm)
+	assert.NoError(suite.T(), err, "Failed to create temp output files directory")
 }
 
-func (suite *MockCmdTestSuite) TestInterpretString_ValidInputs() {
-	tests := []struct {
-		testName       string
-		input          string
-		expectedValue  string
-		expectedIsMock bool
-	}{
-		{
-			testName:       "empty string",
-			input:          "",
-			expectedValue:  "",
-			expectedIsMock: false,
-		},
-		{
-			testName:       "no whitespace",
-			input:          "{{Address.city}}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "regular whitespaces",
-			input:          "{{ Address.city }}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "multiple whitespaces at begining",
-			input:          "{{    Address.city }}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "multiple whitespaces at end",
-			input:          "{{ Address.city    }}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "multiple whitespaces at begining and end",
-			input:          "{{     Address.city    }}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "whitespaces before brackets",
-			input:          "  {{     Address.city    }}",
-			expectedValue:  "Address.city",
-			expectedIsMock: true,
-		},
-		{
-			testName:       "content but no brackets",
-			input:          "Address.city",
-			expectedValue:  "Address.city",
-			expectedIsMock: false,
-		},
-		{
-			testName:       "brackets in middle of content",
-			input:          "{{ Address.cit}}y",
-			expectedValue:  "{{ Address.cit}}y",
-			expectedIsMock: false,
-		},
-	}
-
-	for _, tt := range tests {
-		value, isMock := interpretString(tt.input)
-		assert.Equal(suite.T(), tt.expectedValue, value, "Test case '%s' failed", tt.testName)
-		assert.Equal(suite.T(), tt.expectedIsMock, isMock, "Test case '%s' failed", tt.testName)
-	}
+func (suite *MockCmdTestSuite) TearDownSuite() {
+	// Clean up temp directories after tests
+	err := os.RemoveAll(tempDir)
+	assert.NoError(suite.T(), err, "Failed to remove temp directory")
 }
 
-func (suite *MockCmdTestSuite) TestProcessJsonMap_ValidInputs() {
+func (suite *MockCmdTestSuite) executeCommand(args ...string) (string, error) {
+	// Create a buffer to capture the output
+	outBuf := new(bytes.Buffer)
+
+	opts := &cmd.CommandOptions{
+		Out: outBuf,
+	}
+
+	rootCmd := cmd.NewRootCmd(opts)
+
+	rootCmd.SetArgs(args)
+	err := rootCmd.Execute()
+	return outBuf.String(), err
+}
+
+/*
+	INVALID STATES
+*/
+
+func (suite *MockCmdTestSuite) TestCLINothingToBeParsed() {
+	testName := "Should raise error when nothing to be parsed"
+	_, err := suite.executeCommand("mock")
+	assert.Error(suite.T(), err, testName)
+}
+
+func (suite *MockCmdTestSuite) TestCLIMultipleParseFlagsSimultaneously() {
 	tests := []struct {
 		testName string
-		input    map[string]any
+		input    []string
 	}{
 		{
-			testName: "string value",
-			input: map[string]any{
-				"key": "{{ Address.city }}",
-			},
+			testName: "Should raise error when both --parse-str and --parse-json-file are provided",
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json-file", "test.json"},
 		},
 		{
-			testName: "string value with params",
-			input: map[string]any{
-				"key": "{{ Boolean.booleanWithChance:10 }}",
-			},
+			testName: "Should raise error when both --parse-str and --parse-json are provided",
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '"},
 		},
 		{
-			testName: "2 string values",
-			input: map[string]any{
-				"key":  "{{ Address.city }}",
-				"key2": "{{ Address.state }}",
-			},
+			testName: "Should raise error when both --parse-json and --parse-json-file are provided",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--parse-json-file", "test.json"},
 		},
 		{
-			testName: "string value asking for two results",
-			input: map[string]any{
-				"key[2]": "{{ Address.city }}",
-			},
-		},
-		{
-			testName: "nested map",
-			input: map[string]any{
-				"level": map[string]any{
-					"key": "{{ Address.city }}",
-				},
-			},
-		},
-		{
-			testName: "nested map with 2 values",
-			input: map[string]any{
-				"level": map[string]any{
-					"key":  "{{ Address.city }}",
-					"key2": "{{ Address.state }}",
-				},
-			},
-		},
-		{
-			testName: "nested map asking for two objects",
-			input: map[string]any{
-				"level[2]": map[string]any{
-					"key": "{{ Address.city }}",
-				},
-			},
-		},
-		{
-			testName: "2 nested map on same level",
-			input: map[string]any{
-				"level": map[string]any{
-					"key": "{{ Address.city }}",
-				},
-				"level2": map[string]any{
-					"key": "{{ Address.city }}",
-				},
-			},
-		},
-		{
-			testName: "2 nested map, one inside the other",
-			input: map[string]any{
-				"level_0": map[string]any{
-					"key": "{{ Address.city }}",
-					"level_1": map[string]any{
-						"key": "{{ Address.city }}",
-					},
-				},
-			},
-		},
-		{
-			testName: "arrays of 2 string values",
-			input: map[string]any{
-				"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
-			},
-		},
-		{
-			testName: "2 arrays of 2 strings values",
-			input: map[string]any{
-				"array":  []any{"{{ Address.city }}", "{{ Person.firstName }}"},
-				"array2": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
-			},
-		},
-		{
-			testName: "nested map with array of strings inside",
-			input: map[string]any{
-				"level": map[string]any{
-					"key":   "{{ Address.city }}",
-					"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
-				},
-			},
-		},
-		{
-			testName: "array of nested maps",
-			input: map[string]any{
-				"array": []any{
-					map[string]any{"key": "{{ Address.city }}"},
-					map[string]any{"key": "{{ Person.firstName }}", "key2": "{{ Person.lastName }}"},
-				},
-			},
-		},
-		{
-			testName: "array of nested maps with more maps and arrays inside",
-			input: map[string]any{
-				"array": []any{
-					map[string]any{
-						"key":   "{{ Address.city }}",
-						"array": []any{"{{ Address.city }}", "{{ Person.firstName }}"},
-					},
-					map[string]any{
-						"key":  "{{ Person.firstName }}",
-						"key2": "{{ Person.lastName }}",
-						"map": map[string]any{
-							"key":   "{{ Address.city }}",
-							"array": []any{"{{ Address.city }}", "{{ Person.firstName }}", map[string]any{"key": "{{ Person.lastName }}"}},
-						},
-					},
-				},
-			},
+			testName: "Should raise error when all three --parse-str, --parse-json and --parse-json-file are provided",
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--parse-json-file", "test.json"},
 		},
 	}
 
-	for _, tt := range tests {
-		mockerObj := mocker.New()
-		err := processJsonMap(tt.input, mockerObj)
-		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
+	for _, test := range tests {
+		_, err := suite.executeCommand(test.input...)
+		assert.Error(suite.T(), err, test.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestProcessJsonMap_InvalidInputs() {
+func (suite *MockCmdTestSuite) TestCLIParseStrWithGenerateFlagInvalidUse() {
 	tests := []struct {
 		testName string
-		input    map[string]any
+		input    []string
 	}{
 		{
-			testName: "invalid value in map [integer value]",
-			input: map[string]any{
-				"key": 123,
-			},
+			testName: "Should raise error when using --generate with --parse-str",
+			input:    []string{"mock", "--parse-str", "Hello {{Person.Name}}", "--generate", "5"},
 		},
 		{
-			testName: "invalid type in array [integer value]",
-			input: map[string]any{
-				"array": []any{123},
-			},
+			testName: "Should raise error when --generate value is equal to 0",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--generate", "0", "--to-json-stdout"},
+		},
+		{
+			testName: "Should raise error when --generate value is negative",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '", "--generate", "-1", "--to-json-stdout"},
 		},
 	}
 
-	for _, tt := range tests {
-		mockerObj := mocker.New()
-		err := processJsonMap(tt.input, mockerObj)
-		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+	for _, test := range tests {
+		_, err := suite.executeCommand(test.input...)
+		assert.Error(suite.T(), err, test.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_ValidInputs() {
+func (suite *MockCmdTestSuite) TestCLIParseJsonFileWithInvalidExtension() {
 	tests := []struct {
-		testName      string
-		inputPlace    string
-		inputValue    string
-		expectedDigit int
+		testName string
+		input    []string
 	}{
 		{
-			testName:      "test 1",
-			inputPlace:    "object",
-			inputValue:    "",
-			expectedDigit: 1,
-		},
-		{
-			testName:      "test 2",
-			inputPlace:    "object",
-			inputValue:    "text",
-			expectedDigit: 1,
-		},
-		{
-			testName:      "test 3",
-			inputPlace:    "object",
-			inputValue:    "text[10]",
-			expectedDigit: 10,
-		},
-		{
-			testName:      "test 4",
-			inputPlace:    "file",
-			inputValue:    "text.template.json",
-			expectedDigit: 1,
-		},
-		{
-			testName:      "test 5",
-			inputPlace:    "file",
-			inputValue:    "text[10].template.json",
-			expectedDigit: 10,
+			testName: "Should raise error when --parse-json-file does not end with .template.json",
+			input:    []string{"mock", "--parse-json-file", "/tmp/employee.json", "--to-json-stdout"},
 		},
 	}
 
-	for _, tt := range tests {
-		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
-		assert.Equal(suite.T(), tt.expectedDigit, digit, "Test case '%s' failed", tt.testName)
-		assert.NoError(suite.T(), err, "Test case '%s' failed", tt.testName)
+	for _, test := range tests {
+		_, err := suite.executeCommand(test.input...)
+		assert.Error(suite.T(), err, test.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestExtractDigitInBrackets_InvalidInputs() {
+func (suite *MockCmdTestSuite) TestCLIParseWithoutOutputFlag() {
 	tests := []struct {
-		testName      string
-		inputPlace    string
-		inputValue    string
-		expectedDigit int
+		testName string
+		input    []string
 	}{
 		{
-			testName:      "test 1",
-			inputPlace:    "other",
-			inputValue:    "text[0]",
-			expectedDigit: 0,
+			testName: "Should raise error when using --parse-json without an output flag",
+			input:    []string{"mock", "--parse-json", "' {\"name\": \"{{Person.Name}}\"} '"},
 		},
 		{
-			testName:      "test 2",
-			inputPlace:    "object",
-			inputValue:    "text[-2]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 3",
-			inputPlace:    "object",
-			inputValue:    "text[0]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 4",
-			inputPlace:    "object",
-			inputValue:    "[5]text",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 5",
-			inputPlace:    "object",
-			inputValue:    "te[5]xt",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 6",
-			inputPlace:    "object",
-			inputValue:    "text10]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 7",
-			inputPlace:    "object",
-			inputValue:    "text[]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 8",
-			inputPlace:    "object",
-			inputValue:    "text[something]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 9",
-			inputPlace:    "object",
-			inputValue:    "text[1a9]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 10",
-			inputPlace:    "object",
-			inputValue:    "text[a1]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 11",
-			inputPlace:    "object",
-			inputValue:    "text[@!]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 12",
-			inputPlace:    "object",
-			inputValue:    "text[10][5]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 13",
-			inputPlace:    "object",
-			inputValue:    "text[[5]]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 14",
-			inputPlace:    "object",
-			inputValue:    "text]1[",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 15",
-			inputPlace:    "object",
-			inputValue:    "text[5 ]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test ",
-			inputPlace:    "object",
-			inputValue:    "text[ 10]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 16",
-			inputPlace:    "file",
-			inputValue:    "text[5]",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 17",
-			inputPlace:    "file",
-			inputValue:    "text[5].temp",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 18",
-			inputPlace:    "file",
-			inputValue:    "text[5].json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 19",
-			inputPlace:    "file",
-			inputValue:    "[5].template.json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 20",
-			inputPlace:    "file",
-			inputValue:    "text[5 ].template.json",
-			expectedDigit: 0,
-		},
-		{
-			testName:      "test 21",
-			inputPlace:    "file",
-			inputValue:    "text [5].template.json",
-			expectedDigit: 0,
+			testName: "Should raise error when using --parse-json-file without an output flag",
+			input:    []string{"mock", "--parse-json-file", "/tmp/employee.template.json"},
 		},
 	}
 
-	for _, tt := range tests {
-		digit, err := extractDigitInBrackets(tt.inputPlace, tt.inputValue)
-		assert.Equal(suite.T(), tt.expectedDigit, digit, "Test case '%s' failed", tt.testName)
-		assert.Error(suite.T(), err, "Test case '%s' failed", tt.testName)
+	for _, test := range tests {
+		_, err := suite.executeCommand(test.input...)
+		assert.Error(suite.T(), err, test.testName)
 	}
 }
 
-func (suite *MockCmdTestSuite) TestSanitizeKeyWithBrackets_ValidInputs() {
+/*
+	VALID STATES
+*/
+
+func (suite *MockCmdTestSuite) TestCLIParseStr_ValidInputs() {
 	tests := []struct {
-		testName          string
-		input             string
-		expectedSanitized string
+		testName    string
+		input       []string
+		assertRegex string
 	}{
 		{
-			testName:          "test 1",
-			input:             "",
-			expectedSanitized: "",
+			testName:    "Should mock from --parse-str (literal value)",
+			input:       []string{"mock", "--parse-str", "Hello world"},
+			assertRegex: `Hello world`,
 		},
 		{
-			testName:          "test 2",
-			input:             "text",
-			expectedSanitized: "text",
+			testName:    "Should mock from --parse-str (dynamic value)",
+			input:       []string{"mock", "--parse-str", "Hello {{Person.Name}}"},
+			assertRegex: `Hello .+`,
+		},
+	}
+
+	for _, test := range tests {
+		stdOut, err := suite.executeCommand(test.input...)
+		assert.NoError(suite.T(), err, test.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(test.assertRegex), stdOut, test.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestCLIParseJson_ValidInputs() {
+	tests := []struct {
+		testName    string
+		args        []string
+		assertRegex string
+	}{
+		{
+			testName:    "Should mock from --parse-json with simple JSON object [literal value]",
+			args:        []string{"mock", "--parse-json", `{"name":"John Smith"}`, "--to-stdout"},
+			assertRegex: `^\{"name":"John Smith"\}$`,
 		},
 		{
-			testName:          "test 3",
-			input:             "text[10]",
-			expectedSanitized: "text",
+			testName:    "Should mock from --parse-json with simple JSON object [dynamic value]",
+			args:        []string{"mock", "--parse-json", `{"name":"{{Person.Name}}"}`, "--to-stdout"},
+			assertRegex: `^\{"name":".+"\}$`,
 		},
 		{
-			testName:          "test 4",
-			input:             "text[10].template.json",
-			expectedSanitized: "text.template.json",
+			testName:    "Should mock from --parse-json with --generate producing a JSON array of 2 objects",
+			args:        []string{"mock", "--parse-json", `{"name":"{{Person.Name}}"}`, "--generate", "2", "--to-stdout"},
+			assertRegex: `^\[\{"name":".+"\},\{"name":".+"\}\]$`,
 		},
 		{
-			testName:          "test 5",
-			input:             "te[5]xt",
-			expectedSanitized: "text",
+			testName:    "Should mock from --parse-json with simple JSON object [fixed array values]",
+			args:        []string{"mock", "--parse-json", `{"names":["John Smith", "{{Person.Name}}"]}`, "--to-stdout"},
+			assertRegex: `^\{"names":\["John Smith",".+"\]\}$`,
 		},
 		{
-			testName:          "test 6",
-			input:             "text10]",
-			expectedSanitized: "text10]",
+			testName:    "Should mock from --parse-json with nested JSON object [dynamic value]",
+			args:        []string{"mock", "--parse-json", `{"employee":{"name":"{{Person.Name}}"}}`, "--to-stdout"},
+			assertRegex: `^\{"employee":\{"name":".+"\}\}$`,
 		},
 		{
-			testName:          "test 7",
-			input:             "text]1[",
-			expectedSanitized: "text]1[",
+			testName:    "Should mock from --parse-json with simple JSON object [dynamic array values]",
+			args:        []string{"mock", "--parse-json", `{"names[2]":"{{Person.Name}}"}`, "--to-stdout"},
+			assertRegex: `^\{"names":\[".+",".+"\]\}$`,
+		},
+		{
+			testName:    "Should mock from --parse-json with nested JSON object [dynamic array value]",
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--to-stdout"},
+			assertRegex: `^\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}$`,
+		},
+		{
+			testName:    "Should mock from --parse-json with --generate producing a JSON root array of 2 objects [dynamic array value]",
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--generate", "2", "--to-stdout"},
+			assertRegex: `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
 		},
 	}
 
 	for _, tt := range tests {
-		sanitized := sanitizeKeyWithBrackets(tt.input)
-		assert.Equal(suite.T(), tt.expectedSanitized, sanitized, "Test case '%s' failed", tt.testName)
+		stdOut, err := suite.executeCommand(tt.args...)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestCLIParseJsonFile_ValidInputs() {
+	tests := []struct {
+		testName     string
+		args         []string
+		jsonTemplate string
+		assertRegex  string
+	}{
+		{
+			testName:     "Should mock from --parse-json-file with simple JSON object [literal value]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"name":"John Smith"}`,
+			assertRegex:  `^\{"name":"John Smith"\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with simple JSON object [dynamic value]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"name":"{{Person.Name}}"}`,
+			assertRegex:  `^\{"name":".+"\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with --generate producing a JSON root array of 2 objects",
+			args:         []string{"mock", "--parse-json-file", "", "--generate", "2", "--to-stdout"},
+			jsonTemplate: `{"name":"{{Person.Name}}"}`,
+			assertRegex:  `^\[\{"name":".+"\},\{"name":".+"\}\]$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with simple JSON object [fixed array values]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"names":["John Smith","{{Person.Name}}"]}`,
+			assertRegex:  `^\{"names":\["John Smith",".+"\]\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with nested JSON object [dynamic value]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"employee":{"name":"{{Person.Name}}"}}`,
+			assertRegex:  `^\{"employee":\{"name":".+"\}\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with simple JSON object [dynamic array values]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"names[2]":"{{Person.Name}}"}`,
+			assertRegex:  `^\{"names":\[".+",".+"\]\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with nested JSON object [dynamic array value]",
+			args:         []string{"mock", "--parse-json-file", "", "--to-stdout"},
+			jsonTemplate: `{"employee[2]":{"name":"{{Person.Name}}"}}`,
+			assertRegex:  `^\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}$`,
+		},
+		{
+			testName:     "Should mock from --parse-json-file with --generate producing a JSON root array of 2 objects [dynamic array value]",
+			args:         []string{"mock", "--parse-json-file", "", "--generate", "2", "--to-stdout"},
+			jsonTemplate: `{"employee[2]":{"name":"{{Person.Name}}"}}`,
+			assertRegex:  `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
+		},
+	}
+
+	for _, tt := range tests {
+		// Create template temp file
+		tmpFile, err := os.CreateTemp(tempInputFilesDir, "*.template.json")
+		assert.NoError(suite.T(), err, tt.testName)
+		defer os.Remove(tmpFile.Name())
+		_, err = tmpFile.WriteString(tt.jsonTemplate)
+		assert.NoError(suite.T(), err, tt.testName)
+		tmpFile.Close()
+
+		// Set the generated temp file path as the argument for --parse-json-file
+		// --parse-json-file is always the 3rd argument in the test cases
+		tt.args[2] = tmpFile.Name()
+
+		stdOut, err := suite.executeCommand(tt.args...)
+		assert.NoError(suite.T(), err, tt.testName)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), stdOut, tt.testName)
+	}
+}
+
+func (suite *MockCmdTestSuite) TestCLIParseJsonToFile_ValidInputs() {
+	outputFilename := tempOutputFilesDir + "/output.json"
+	tests := []struct {
+		testName    string
+		args        []string
+		assertRegex string
+	}{
+		{
+			testName:    "Should mock from --parse-json with --generate producing a JSON root array of 2 objects to an output file [dynamic array value]",
+			args:        []string{"mock", "--parse-json", `{"employee[2]":{"name":"{{Person.Name}}"}}`, "--generate", "2", "--to-file", outputFilename},
+			assertRegex: `^\[\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\},\{"employee":\[\{"name":".+"\},\{"name":".+"\}\]\}\]$`,
+		},
+	}
+
+	for _, tt := range tests {
+		_, err := suite.executeCommand(tt.args...)
+		assert.NoError(suite.T(), err, tt.testName)
+
+		// Read the output file and assert its content
+		outputBytes, err := os.ReadFile(outputFilename)
+		assert.NoError(suite.T(), err, tt.testName)
+		output := string(outputBytes)
+		assert.Regexp(suite.T(), regexp.MustCompile(tt.assertRegex), output, tt.testName)
+		os.Remove(outputFilename)
 	}
 }

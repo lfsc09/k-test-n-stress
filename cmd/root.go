@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 )
+
+type CommandOptions struct {
+	Out io.Writer
+}
 
 func NewRootCmd(opts *CommandOptions) *cobra.Command {
 	if opts == nil {
@@ -15,11 +20,12 @@ func NewRootCmd(opts *CommandOptions) *cobra.Command {
 
 	rootCmd := &cobra.Command{
 		Use:   "ktns",
-		Short: "K Test N Stress is a tool to generate mock data, make HTTP requests, stress HTTP endpoints and seed databases.",
-		Long:  `K Test N Stress is a tool to generate mock data, make HTTP requests, stress HTTP endpoints and seed databases with several configurations.`,
+		Short: "K Test N Stress is a tool to generate mock data, make HTTP requests and stress HTTP endpoints.",
+		Long:  `K Test N Stress is a tool to generate mock data, make HTTP requests and stress HTTP endpoints.`,
 		CompletionOptions: cobra.CompletionOptions{
 			HiddenDefaultCmd: true,
 		},
+		Version: Version,
 	}
 
 	// Configure cobra ouput streams to use the custom 'Out'

@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lfsc09/k-test-n-stress/mocker"
+	"github.com/lfsc09/k-test-n-stress/internal/mock"
+	"github.com/lfsc09/k-test-n-stress/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -23,14 +24,14 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			method, _ := cmd.Flags().GetString("method")
 			forceHttps, _ := cmd.Flags().GetBool("https")
 			urlStr, _ := cmd.Flags().GetString("url")
-			headers, _ := cmd.Flags().GetStringSlice("header")
+			headers, _ := cmd.Flags().GetStringArray("header")
 			data, _ := cmd.Flags().GetString("data")
-			queryParams, _ := cmd.Flags().GetStringSlice("qs")
+			queryParams, _ := cmd.Flags().GetStringArray("qs")
 			//responseAccessor := cmd.Flags().GetString("response-accessor")
 			withMetrics, _ := cmd.Flags().GetBool("with-metrics")
 			onlyResponseBody, _ := cmd.Flags().GetBool("only-response-body")
 
-			mocker := mocker.New()
+			faker := mock.NewFaker()
 			method = strings.ToUpper(method)
 
 			// Validate flags
@@ -39,21 +40,31 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			}
 
 			// Decide the URL prefix
-			var urlPrefix string
-			if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
-				if forceHttps {
-					urlPrefix = "https://"
-				} else {
-					urlPrefix = "http://"
+			if forceHttps {
+				if after, ok := strings.CutPrefix(urlStr, "http://"); ok {
+					urlStr = "https://" + after
+				} else if !strings.HasPrefix(urlStr, "https://") {
+					urlStr = "https://" + urlStr
+				}
+			} else {
+				if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") {
+					urlStr = "http://" + urlStr
 				}
 			}
-			urlStr = urlPrefix + urlStr
 
 			// Mock Url params if present
-			urlStr = processStr(urlStr, mocker)
+			// Compile the string value into mock blocks
+			mockBlocks, err := mock.CompileMockBlocks(urlStr)
+			if err != nil {
+				return fmt.Errorf("error processing URL '%w'", err)
+			}
+			mockedUrlStr, err := mock.ExecuteMockBlocks(mockBlocks, faker)
+			if err != nil {
+				return fmt.Errorf("error processing URL '%w'", err)
+			}
 
 			// Parse the URL
-			parsedUrl, err := url.Parse(urlStr)
+			parsedUrl, err := url.Parse(mockedUrlStr)
 			if err != nil {
 				return fmt.Errorf("error parsing URL '%w'", err)
 			}
@@ -64,8 +75,18 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				parts := strings.SplitN(queryParam, "=", 2)
 				if len(parts) == 2 {
 					key := strings.TrimSpace(parts[0])
-					value := processStr(strings.TrimSpace(parts[1]), mocker)
-					query.Add(key, value)
+
+					// Compile the string value into mock blocks
+					mockBlocks, err := mock.CompileMockBlocks(strings.TrimSpace(parts[1]))
+					if err != nil {
+						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
+					}
+					mockedQsStr, err := mock.ExecuteMockBlocks(mockBlocks, faker)
+					if err != nil {
+						return fmt.Errorf("error processing query string parameter '%s': %w", key, err)
+					}
+
+					query.Add(key, mockedQsStr)
 				}
 			}
 			parsedUrl.RawQuery = query.Encode()
@@ -74,26 +95,30 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 			var body io.Reader
 			if data != "" {
 				// Parse the string object content
-				var parseMap map[string]any
-				if err := json.Unmarshal([]byte(data), &parseMap); err != nil {
+				var rawJson map[string]any
+				if err := json.Unmarshal([]byte(data), &rawJson); err != nil {
 					return fmt.Errorf("failed to parse JSON from the provided --data '%w'", err)
 				}
 
-				// Process the parsed map
-				if err := processJsonMap(parseMap, mocker); err != nil {
-					return fmt.Errorf("%w", err)
-				}
-
-				// Sanitize the parsed map
-				sanitizeJsonMap(parseMap)
-
-				// Convert back to JSON string
-				jsonBytes, err := json.Marshal(parseMap)
+				blueprintInitialNode := &mock.TemplateJsonNode{Type: mock.NodeObject, Repeat: 1}
+				_, err := mock.CompileJSONTemplate(rawJson, blueprintInitialNode)
 				if err != nil {
-					return fmt.Errorf("failed to convert JSON map to string '%w'", err)
+					return err
 				}
 
-				body = bytes.NewBuffer(jsonBytes)
+				var memBuf bytes.Buffer
+				// Write into the in-memory buffer
+				bufferWriter := mock.NewBufferWriter(&memBuf, nil)
+				if bufferWriter == nil {
+					return fmt.Errorf("failed to initialize buffer writer: no valid output destination configured")
+				}
+
+				blueprintInitialNode.GenerateJSON(faker, nil, bufferWriter)
+				if err := bufferWriter.Done(); err != nil {
+					return err
+				}
+
+				body = &memBuf
 			}
 
 			// Create request
@@ -131,8 +156,8 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 				fmt.Fprintf(opts.Out, "Status: %s\n", resp.Status)
 				if withMetrics {
 					fmt.Fprintf(opts.Out, "Metrics:\n")
-					fmt.Fprintf(opts.Out, "  Duration:%s\n", formatDurationMetrics(duration))
-					fmt.Fprintf(opts.Out, "  Size:%s\n", formatSizeMetrics(int64(len(respBody))))
+					fmt.Fprintf(opts.Out, "  Duration:%s\n", utils.FormatDurationMetrics(duration.Seconds()))
+					fmt.Fprintf(opts.Out, "  Size:%s\n", utils.FormatSizeMetrics(uint64(len(respBody))))
 				}
 				fmt.Fprintf(opts.Out, "URL: %s\n", req.URL.String())
 				fmt.Fprintf(opts.Out, "Headers:\n")
@@ -147,14 +172,14 @@ func NewRequestCmd(opts *CommandOptions) *cobra.Command {
 		},
 	}
 
-	requestCmd.Flags().String("method", "GET", "the method to be used in the request (e.g. GET, POST, PUT, DELETE)")
-	requestCmd.Flags().Bool("https", false, "if set, use https instead of http")
-	requestCmd.Flags().String("url", "", "the url of the request, with added Url params (e.g. localhost:8080, localhost:8000/api/v1/users, api.com/user/{UUID.uuidv4})")
-	requestCmd.Flags().StringArray("header", []string{}, "pass a string 'header', in key:value format, to be used as the request header, (e.g. 'Authorization: Bearer {token}')")
-	requestCmd.Flags().String("data", "", "pass a JSON object as a string to be used as the request body")
-	requestCmd.Flags().StringArray("qs", []string{}, "pass a string 'query string' to be used as the request query string")
+	requestCmd.Flags().String("method", "GET", "the method to be used in the request (e.g. GET, POST, PUT, PATCH, DELETE)")
+	requestCmd.Flags().Bool("https", false, "if set, overwrite the URL to use https:// as prefix")
+	requestCmd.Flags().String("url", "", "the URL of the request, with added URL params (e.g. localhost:8080, localhost:8000/api/v1/users, api.com/user/{UUID.uuidv4})")
+	requestCmd.Flags().StringArray("header", []string{}, "pass a string, in `<key>: <value>` format, to be used header in the request, (e.g. 'Authorization: Bearer {token}')")
+	requestCmd.Flags().String("data", "", "pass a JSON string format to be used as the request body")
+	requestCmd.Flags().StringArray("qs", []string{}, "pass a string, in `<key>=<value>` format, to be used as query string in the request")
 	requestCmd.Flags().String("response-accessor", "", "pass a string 'response accessor', (e.g. ['token']), to be used to access the response data, if unable to access the data, the whole response will be returned")
-	requestCmd.Flags().Bool("with-metrics", false, "if set, show metrics of the request")
+	requestCmd.Flags().Bool("with-metrics", false, "if set, add request metrics in the response output")
 	requestCmd.Flags().Bool("only-response-body", false, "if set, the command output will be only the response's body, nothing more")
 
 	// Configure cobra ouput streams to use the custom 'Out'

@@ -30,7 +30,15 @@ go.work.sum
 
 # any folders that are not source code
 */
+!/.claude/
+!/.claude/**
+!/.githooks/
+!/.githooks/**
 !/.github/
 !/.github/**
+!/.vscode/
+!/.vscode/**
 !/cmd
 !/mocker
+!/internal
+!/internal/**
